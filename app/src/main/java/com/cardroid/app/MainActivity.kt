@@ -97,6 +97,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         CarDroidSettings.initialize(applicationContext)
         CarDroidLog.attachFile(applicationContext)
+        com.cardroid.app.update.UpdateChecks.checkAutomatically(this)
         AutoStartReceiver.startBluetoothIfAllowed(this, "app opened")
         // Keep the platform bars aligned with the Compose cockpit palette even though
         // the legacy manifest theme still supplies the Activity shell.
@@ -442,6 +443,9 @@ private fun CarDroidScreen(
                         onClearLog = { CarDroidLog.clear() },
                     )
                     null -> Unit
+                }
+                TextButton(onClick = { context.startActivity(Intent(context, com.cardroid.app.update.UpdateActivity::class.java)) }) {
+                    Text("Check for updates")
                 }
             }
         }

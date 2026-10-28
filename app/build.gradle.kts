@@ -66,4 +66,6 @@ dependencies {
     implementation("dev.rikka.shizuku:api:13.1.5")
     implementation("dev.rikka.shizuku:provider:13.1.5")
     testImplementation("junit:junit:4.13.2")
+    // Android provides org.json at runtime; JVM release-parser tests need a real implementation.
+    testImplementation("org.json:json:20240303")
 }
