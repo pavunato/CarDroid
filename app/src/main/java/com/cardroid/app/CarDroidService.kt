@@ -51,8 +51,18 @@ class CarDroidService : Service() {
     @Volatile private var autoStartAttempted = false
     @Volatile private var autoStartSuppressed = false
 
+    private val bluetoothStateReceiver = object : android.content.BroadcastReceiver() {
+        override fun onReceive(context: android.content.Context, intent: Intent) {
+            val state = intent.getIntExtra(android.bluetooth.BluetoothAdapter.EXTRA_STATE, -1)
+            if (state == android.bluetooth.BluetoothAdapter.STATE_OFF || state == android.bluetooth.BluetoothAdapter.STATE_TURNING_OFF) stop()
+        }
+    }
+
     override fun onCreate() {
         super.onCreate()
+        androidx.core.content.ContextCompat.registerReceiver(this, bluetoothStateReceiver,
+            android.content.IntentFilter(android.bluetooth.BluetoothAdapter.ACTION_STATE_CHANGED),
+            androidx.core.content.ContextCompat.RECEIVER_EXPORTED)
         CarDroidLog.attachFile(applicationContext)
         CarDroidSettings.initialize(applicationContext)
         shizukuStarter = ShizukuHelperStarter.get(applicationContext).also { it.initialize() }
@@ -112,6 +122,7 @@ class CarDroidService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_START_BT -> startBt()
+            ACTION_RETRY -> { stop(stopService = false); startBt() }
             ACTION_STOP -> stop()
         }
         return START_STICKY
@@ -256,7 +267,7 @@ class CarDroidService : Service() {
             }
         return controllerId to seed
     }
-    private fun mediaOptions(ep: com.cardroid.lib.CarPlaySession.AirPlayEndpoint): com.cardroid.lib.airplay.CarPlayMediaOptions? {
+    private fun mediaOptions(ep: com.cardroid.lib.CarPlaySession.AirPlayEndpoint, diagnosticToken: Long): com.cardroid.lib.airplay.CarPlayMediaOptions? {
         val hex = ep.publicKey
         val pinned = hex.length == 64 && hex.all { it in "0123456789abcdefABCDEF" }
         CarDroidLog.log("AirPlay: media enabled for '${ep.receiverName}' (receiver key ${if (pinned) "pinned from 0x4301" else "learned from pair-setup M6"})")
@@ -296,6 +307,8 @@ class CarDroidService : Service() {
                     audio.start()
                 } else {
                     CarDroidLog.log("CarDisplay: helper required; screen sharing is disabled")
+                    // Record why before closing: the receiver's later socket close must not hide the cause.
+                    CarDroidLog.diagnostics.helperMissing(diagnosticToken)
                     transport.close()
                 }
             })
@@ -355,13 +368,22 @@ class CarDroidService : Service() {
         // Auto-start may arrive via startForegroundService while already running; keep the foreground promise.
         if (pipeline != null) { startMediaForeground(); return }
         CarDroidLog.clear()
+        val diagnosticToken = CarDroidLog.diagnostics.begin()
         startMediaForeground()
 
         val adapter = (getSystemService(BLUETOOTH_SERVICE) as BluetoothManager).adapter
+        if (adapter == null) {
+            CarDroidLog.diagnostics.ble(diagnosticToken, com.cardroid.lib.ConnectionDiagnostics.Status.UNAVAILABLE)
+            CarDroidLog.diagnostics.listener(diagnosticToken, com.cardroid.lib.ConnectionDiagnostics.Status.UNAVAILABLE)
+            return
+        }
         val phoneName = CarDroidName.forPhone(this)
         val identity = IPhoneIdentity(name = phoneName, bluetoothName = phoneName)
         identityName = identity.name
-        val wifi = AndroidWifiHandoff(applicationContext, CarDroidLog::log)
+        val wifi = AndroidWifiHandoff(applicationContext, CarDroidLog::log) { issue ->
+            if (issue == "WIFI_LOST") CarDroidLog.diagnostics.wifiLost(diagnosticToken)
+            else CarDroidLog.diagnostics.failure(diagnosticToken, issue)
+        }
         wifiHandoff = wifi
         val mfi = OkcarBypassProvider()
 
@@ -370,7 +392,8 @@ class CarDroidService : Service() {
 
         startCtrlIntServer(sc, identity.name, preferredNetwork = null, phase = "pre-WiFi")
 
-        val p = CarDroidPipeline.bluetooth(adapter, identity, mfi, wifi, log = CarDroidLog::log)
+        val p = CarDroidPipeline.bluetooth(adapter, identity, mfi, wifi, log = CarDroidLog::log,
+            diagnostics = CarDroidLog.diagnostics, diagnosticToken = diagnosticToken)
         pipeline = p
         teardownGuard.rearm()
         p.onLinkUp = { teardownGuard.rearm() }
@@ -386,7 +409,7 @@ class CarDroidService : Service() {
         }
         stateJob = sc.launch {
             p.state.collect { s ->
-                CarDroidLog.setState(s)
+                if (pipeline === p) CarDroidLog.setState(s)
                 // Phase 0+1 is trusted; once WiFi handoff arrives, quiet the
                 // iAP2 wire chatter so the AirPlay phase we're debugging is
                 // legible. CarPlayAirPlayStart implies WiFi already joined.
@@ -405,6 +428,8 @@ class CarDroidService : Service() {
         // discovery/control-service setup. Receiver replies to 0x4300 before
         // Android may have finished joining the accessory network.
         wifi.onNetworkReady { net ->
+            if (pipeline !== p) return@onNetworkReady
+            CarDroidLog.diagnostics.reached(diagnosticToken, com.cardroid.lib.ConnectionDiagnostics.Stage.WIFI_JOINED)
             discoveredReceivers.clear()
             joinedNetwork = net as? Network
             CarDroidLog.log("WiFi bound (network=$joinedNetwork); starting mDNS browse + ctrl-int publish")
@@ -430,7 +455,7 @@ class CarDroidService : Service() {
             val pending = synchronized(endpointLock) {
                 pendingAirPlayEndpoint.also { pendingAirPlayEndpoint = null }
             }
-            pending?.let { runAirPlayHandshake(it, p, wifi, sc, mfi) }
+            pending?.let { runAirPlayHandshake(it, p, wifi, sc, mfi, diagnosticToken) }
         }
 
         // Use the iAP2 receiver endpoint; queue it if Wi-Fi is still joining.
@@ -447,7 +472,7 @@ class CarDroidService : Service() {
                 wifi.rejoinLastIfLost("0x4301 while accessory WiFi is down")
             } else {
                 joinedNetwork = activeNetwork
-                runAirPlayHandshake(ep, p, wifi, sc, mfi)
+                runAirPlayHandshake(ep, p, wifi, sc, mfi, diagnosticToken)
             }
         }
     }
@@ -458,6 +483,7 @@ class CarDroidService : Service() {
         wifi: AndroidWifiHandoff,
         sc: kotlinx.coroutines.CoroutineScope,
         iapAuthProvider: MfiAuthProvider,
+        diagnosticToken: Long,
     ) {
         run {
             // The car's 0x4301 message is authoritative. mDNS often picks up
@@ -520,7 +546,7 @@ class CarDroidService : Service() {
             val displayHost = if (hostNoZone.contains(':') && ifaceName != null) "$hostNoZone%$ifaceName" else hostNoZone
             CarDroidLog.log("AirPlay: resolving target host=$hostNoZone iface=$ifaceName nifIndex=${nif?.index ?: -1}")
 
-            val media = mediaOptions(ep)
+            val media = mediaOptions(ep, diagnosticToken)
             val finalParams = AirPlayParams(
                 host = displayHost,
                 airPlayPort = port,
@@ -567,7 +593,12 @@ class CarDroidService : Service() {
             CarDroidLog.log("AirPlay: starting handshake to ${finalParams.host}:${finalParams.airPlayPort}")
             val mfiSap: com.cardroid.lib.airplay.AirPlayMfiSap =
                 OkcarMfiSapImpl(applicationContext, CarDroidLog::log)
-            val orch = AirPlayHandshakeOrchestrator(
+            CarDroidLog.diagnostics.reached(diagnosticToken, com.cardroid.lib.ConnectionDiagnostics.Stage.AIRPLAY)
+            lateinit var orch: AirPlayHandshakeOrchestrator
+            orch = AirPlayHandshakeOrchestrator(
+                onDiagnosticStage = { stage ->
+                    if (pipeline === p && airPlay === orch) CarDroidLog.diagnostics.reached(diagnosticToken, stage)
+                },
                 params = finalParams,
                 mfi = mfiSap,
                 socketFactory = sockFactory,
@@ -594,6 +625,7 @@ class CarDroidService : Service() {
                 try {
                     orch.run(sc)
                 } catch (t: Throwable) {
+                    if (pipeline === p && airPlay === orch) CarDroidLog.diagnostics.failure(diagnosticToken, "AIRPLAY_FAILED")
                     CarDroidLog.log("AirPlay: handshake failed ${t.javaClass.simpleName}: ${t.message}")
                     runCatching { orch.stop() }
                     if (airPlay === orch) { airPlay = null; p.endSession("handshake failed: ${t.javaClass.simpleName}") }
@@ -657,7 +689,8 @@ class CarDroidService : Service() {
     }
 
 
-    private fun stop() {
+    private fun stop(stopService: Boolean = true) {
+        CarDroidLog.diagnostics.stop()
         available.value = false
         CarDroidLog.setState(com.cardroid.lib.CarPlaySession.State.Idle)
         airPlay?.stop(); airPlay = null
@@ -671,19 +704,24 @@ class CarDroidService : Service() {
         RemoteControlService.setHidRegistry(null)
         ctrlInt?.stop(); ctrlInt = null
         mdns?.stop(); mdns = null
-        pipeline?.stop(); pipeline = null
+        val oldPipeline = pipeline; pipeline = null
+        runCatching { oldPipeline?.stop() }
         scope?.cancel(); scope = null
+        runCatching { wifiHandoff?.tearDown() }; wifiHandoff = null
         joinedNetwork = null
         mdnsResolvedEndpoint = null
         discoveredReceivers.clear()
         pendingAirPlayEndpoint = null
-        stopForeground(STOP_FOREGROUND_REMOVE)
-        stopSelf()
+        if (stopService) {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
+        }
         CarDroidLog.setQuietWire(false)
         CarDroidLog.log("CarDroid stopped")
     }
 
     override fun onDestroy() {
+        runCatching { unregisterReceiver(bluetoothStateReceiver) }
         autoStartJob?.cancel(); autoStartJob = null
         runCatching { helperClient?.let { com.cardroid.app.car.CarDisplayState.detach(it) }; helperClient?.stop(); helperScope.cancel() }
         stop(); super.onDestroy()
@@ -712,6 +750,7 @@ class CarDroidService : Service() {
         internal val starPrompt = kotlinx.coroutines.flow.MutableStateFlow(false)
         const val ACTION_START_BT = "com.cardroid.app.START_BT"
         const val ACTION_STOP = "com.cardroid.app.STOP"
+        const val ACTION_RETRY = "com.cardroid.app.RETRY"
         // Back-compat with older intent name from earlier code.
         const val ACTION_START = ACTION_START_BT
         /** Car display density; revisit in Phase 4 (launcher). */

@@ -23,6 +23,24 @@
 
 Recent apps are launcher session history, not the Android task switcher. Dashboard panels stay mounted when another page or single app is shown, with input disabled while covered. Android apps with restrictive launch modes (for example `singleTask`), secure video, or secondary-display limitations may not support independent instances; validate your apps on a device.
 
+## Troubleshoot a car that sees only an ordinary Bluetooth phone
+
+The **Setup checklist** checks phone prerequisites only. Even all-green permissions, Bluetooth and Shizuku checks do **not** verify CarPlay. Open **Car connection · live checks**, then **Show connection details**:
+
+- **Full BLE advertisement active** appears only after Android reports advertising success. It is local proof, not proof that the car recognized the phone.
+- **Reduced Bluetooth discovery** is an amber warning: Android rejected the full advertisement and the manufacturer-only fallback started. The fallback has **no iAP2 UUID in BLE**; Classic SDP is separate. This may affect receiver discovery.
+- **Classic iAP2 listener** means `listenUsingRfcommWithServiceRecord` actually succeeded (SDP / RFCOMM). A listening socket is not a receiver connection.
+- **Receiver Bluetooth socket accepted**, **iAP2 detect**, and **link synchronized** are separate observed events. Ordinary phone pairing does not imply any of these.
+- Certificate, authentication, identification and EA-session events show what this implementation actually processed. “Authentication response processed locally” is not a cryptographic compatibility guarantee or a receiver-acceptance claim.
+- **Wi-Fi configuration received** is not **Accessory Wi-Fi joined**. **AirPlay endpoint received** is not media ready. **RECORD accepted** and **Media transport ready** have their own real handshake hooks. There is no receiver acknowledgement proving video is visibly rendered; check the car screen.
+- Missing signals stay **Not verified**. Stopping clears live proof; a new receiver attempt clears prior session proof. Last issues and a bounded typed-event timeline are retained in the report for diagnosis.
+
+Tap **Make phone discoverable** to open Android’s official confirmation for **120 seconds** of Classic Bluetooth visibility. Nearby devices / Bluetooth permission is requested first when needed. Visibility is read from the adapter’s real scan mode and system broadcasts, not inferred from BLE success or the countdown. The remaining time is approximate; Android controls expiry, and returning to paired-only visibility is normal. Denying the request is shown without claiming a protocol failure. The app does not bypass OS consent or enable permanent discoverability, and background auto-start never opens this dialog. Use **Retry connection checks** to tear down the old attempt and start a fresh generation, or **Stop checks** to clear live proof.
+
+Select this phone from the car’s **CarPlay / add-phone screen**, not only its ordinary Bluetooth phone list. If it stalls, tap **Copy report** or **Share** and include the car model/year, receiver firmware and phone model manually. The report contains only allowlisted status/events, app and Android versions: no raw logs, SSIDs, addresses, Wi-Fi passwords, pairing keys, pinned keys, auth seeds or protocol payloads. Arbitrary exception text is deliberately omitted for privacy. Existing Advanced/raw on-device logs are separate and may contain sensitive protocol details; do not share them without review.
+
+These diagnostics do not alter advertisement payloads or fix receiver compatibility by themselves. A real phone and car are required to verify discovery and projection.
+
 ## Build and test
 
 Configure Java 17 and the Android SDK as described in the [build guide](docs/BUILD.md), then run:

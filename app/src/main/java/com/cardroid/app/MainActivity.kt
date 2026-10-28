@@ -77,6 +77,29 @@ import kotlinx.coroutines.flow.MutableStateFlow
 class MainActivity : ComponentActivity() {
 
     private val permissionRevision = MutableStateFlow(0)
+    private val discoverableLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        CarDroidLog.classicDiscovery.requestResult(result.resultCode.coerceAtLeast(0), android.os.SystemClock.elapsedRealtime())
+        refreshClassicVisibility()
+    }
+    private val scanModeReceiver = object : android.content.BroadcastReceiver() {
+        override fun onReceive(context: android.content.Context, intent: Intent) { refreshClassicVisibility() }
+    }
+    private fun refreshClassicVisibility() {
+        val mode = runCatching {
+            val adapter = btAdapter()
+            when {
+                adapter == null || !adapter.isEnabled -> com.cardroid.lib.ClassicDiscoverability.Mode.OFF
+                adapter.scanMode == BluetoothAdapter.SCAN_MODE_CONNECTABLE_DISCOVERABLE -> com.cardroid.lib.ClassicDiscoverability.Mode.DISCOVERABLE
+                adapter.scanMode == BluetoothAdapter.SCAN_MODE_CONNECTABLE -> com.cardroid.lib.ClassicDiscoverability.Mode.PAIRED_ONLY
+                else -> com.cardroid.lib.ClassicDiscoverability.Mode.UNKNOWN
+            }
+        }.getOrElse { CarDroidLog.classicDiscovery.unavailable(); return }
+        CarDroidLog.classicDiscovery.observed(mode)
+    }
+    override fun onDestroy() {
+        runCatching { unregisterReceiver(scanModeReceiver) }
+        super.onDestroy()
+    }
 
     private val permLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -89,11 +112,17 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         // Refresh runtime permissions when the Activity returns from system settings.
         permissionRevision.value += 1
+        refreshClassicVisibility()
         ShizukuHelperStarter.get(applicationContext).initialize()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        ContextCompat.registerReceiver(this, scanModeReceiver, android.content.IntentFilter().apply {
+            addAction(BluetoothAdapter.ACTION_SCAN_MODE_CHANGED)
+            addAction(BluetoothAdapter.ACTION_STATE_CHANGED)
+        }, ContextCompat.RECEIVER_EXPORTED)
+        refreshClassicVisibility()
         CarDroidSettings.initialize(applicationContext)
         CarDroidLog.attachFile(applicationContext)
         com.cardroid.app.update.UpdateChecks.checkAutomatically(this)
@@ -133,6 +162,17 @@ class MainActivity : ComponentActivity() {
                             }
                         },
                         bluetoothEnabled = { bluetoothEnabledSafely() },
+                        onDiscoverable = {
+                            refreshClassicVisibility()
+                            if (!PermissionSnapshot.from(this@MainActivity, requiredPermissions()).bluetoothReady) {
+                                val missing = PermissionSnapshot.from(this@MainActivity, requiredPermissions()).missing
+                                permLauncher.launch(missing.toTypedArray())
+                            } else if (CarDroidLog.classicDiscovery.state.value.mode != com.cardroid.lib.ClassicDiscoverability.Mode.DISCOVERABLE) {
+                                runCatching { discoverableLauncher.launch(Intent(BluetoothAdapter.ACTION_REQUEST_DISCOVERABLE)
+                                    .putExtra(BluetoothAdapter.EXTRA_DISCOVERABLE_DURATION, 120)) }
+                                    .onFailure { CarDroidLog.classicDiscovery.unavailable() }
+                            }
+                        },
                     )
                 }
             }
@@ -189,14 +229,14 @@ private fun describeConnection(state: CarPlaySession.State): ConnectionStatus = 
     CarPlaySession.State.LinkUp -> ConnectionStatus("Connecting", "Link established")
     is CarPlaySession.State.MfiCertReceived -> ConnectionStatus("Connecting", "Checking the receiver")
     is CarPlaySession.State.Authenticating -> ConnectionStatus("Connecting", "Verifying the receiver")
-    CarPlaySession.State.AuthComplete -> ConnectionStatus("Connecting", "Receiver accepted")
+    CarPlaySession.State.AuthComplete -> ConnectionStatus("Connecting", "Authentication response processed locally")
     CarPlaySession.State.Identified -> ConnectionStatus("Connecting", "Opening CarPlay")
     CarPlaySession.State.EaSessionOpen -> ConnectionStatus("Connecting", "CarPlay session open")
     CarPlaySession.State.WifiHandoffRequested -> ConnectionStatus("Connecting", "Waiting for Wi-Fi")
     is CarPlaySession.State.WifiHandoffReceived -> ConnectionStatus("Connecting", "Joining ${state.ssid}")
     is CarPlaySession.State.CarPlayAirPlayStart -> ConnectionStatus(
-        if (state.endpoint.receiverName.isBlank()) "CarPlay is ready" else "${state.endpoint.receiverName} connected",
-        "Car display starts automatically with the helper",
+        "AirPlay endpoint received",
+        "Wi-Fi / media readiness is checked separately below",
     )
     is CarPlaySession.State.Failed -> ConnectionStatus(
         "Couldn't connect",
@@ -251,12 +291,18 @@ internal fun nextStep(
     state is CarPlaySession.State.Failed ->
         NextStep("Couldn't connect", state.reason.ifBlank { "The receiver stopped the handshake" }.take(80), "Try again", NextStep.Kind.Retry)
     state is CarPlaySession.State.CarPlayAirPlayStart ->
-        NextStep("Receiver connected", "The car display starts when media is ready", "Receiver connected", NextStep.Kind.Ready)
+        NextStep("Setting up car media", "Endpoint received; see live checks below for media readiness", "Waiting for media…", NextStep.Kind.Ready)
     state == CarPlaySession.State.Idle && listening ->
         NextStep("Waiting for your car", "Select this phone in the car’s CarPlay screen", "Waiting for car…", NextStep.Kind.Available)
     state == CarPlaySession.State.Idle ->
         NextStep("Make your phone available", "Then select this phone in the car’s CarPlay screen", "Make available", NextStep.Kind.Connect)
     else -> describeConnection(state).let { NextStep(it.title, it.detail, "Cancel", NextStep.Kind.Connecting) }
+}
+
+/** Shown near Connect: without a running helper, CarDroid closes the receiver's video stream right after media setup. */
+internal fun helperWarning(helper: HelperClient.State): String? = when (helper) {
+    is HelperClient.State.Connected, is HelperClient.State.DisplayActive -> null
+    else -> "Display helper not running: Bluetooth can still connect, but CarDroid will close the car video until the helper is started (Shizuku or ADB)."
 }
 
 private enum class Sheet { Advanced }
@@ -271,6 +317,7 @@ private fun CarDroidScreen(
     onStop: () -> Unit,
     onEnableBluetooth: () -> Unit,
     bluetoothEnabled: () -> Boolean,
+    onDiscoverable: () -> Unit,
 ) {
     val log by CarDroidLog.lines.collectAsState()
     val state by CarDroidLog.state.collectAsState()
@@ -329,10 +376,18 @@ private fun CarDroidScreen(
     var sheet by remember { mutableStateOf<Sheet?>(null) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
+    val retry: () -> Unit = {
+        when {
+            !permissionSnapshot.bluetoothReady -> onRequestPerms()
+            !bluetoothOn -> onEnableBluetooth()
+            else -> { context.startService(Intent(context, CarDroidService::class.java).setAction(CarDroidService.ACTION_RETRY)); Unit }
+        }
+    }
     val onAction: () -> Unit = when (step.kind) {
         NextStep.Kind.Permissions -> onRequestPerms
         NextStep.Kind.Bluetooth -> onEnableBluetooth
-        NextStep.Kind.Connect, NextStep.Kind.Retry -> connect
+        NextStep.Kind.Connect -> connect
+        NextStep.Kind.Retry -> retry
         NextStep.Kind.ShizukuOpen -> { { starter.openShizuku(context) } }
         NextStep.Kind.ShizukuAllow -> { { starter.requestPermission() } }
         NextStep.Kind.Helper -> { { onStartBt(); starter.restart() } }
@@ -389,6 +444,10 @@ private fun CarDroidScreen(
                     onDisconnect = onStop,
                     canDisconnect = sessionActive,
                 )
+                helperWarning(helper)?.let { warning ->
+                    Text(warning, modifier = Modifier.padding(horizontal = 8.dp),
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                }
                 Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                     Text(when (helper) {
                         is HelperClient.State.Connected, is HelperClient.State.DisplayActive -> "Display helper ready"
@@ -401,6 +460,7 @@ private fun CarDroidScreen(
                     Text(if (carDisplayId >= 0) "Car display active" else "Car display waiting",
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
+                ConnectionDiagnosticsCard(onDiscoverable, onStop, onRetry = retry)
                 ConnectionChecklist(
                     permissions = permissionSnapshot,
                     bluetoothOn = bluetoothOn,
@@ -517,6 +577,8 @@ private fun ConnectionChecklist(
     val helperAccess = shizukuApproved || helperReady
     ProductCard {
         Text("Setup checklist", style = MaterialTheme.typography.titleLarge)
+        Text("Prerequisites only — these checks do not verify a CarPlay connection.",
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(8.dp))
         ChecklistGroup("Phone setup", runtimeDone + if (bluetoothOn) 1 else 0, runtimeGroups.size + 1) {
             runtimeGroups.forEach { (title, detail, required) ->

@@ -10,6 +10,8 @@ import java.util.Locale
 
 /** Tiny in-memory log fanned out to the UI, to logcat, and to a rotating file under the app's files dir. */
 object CarDroidLog {
+    val diagnostics = com.cardroid.lib.ConnectionDiagnostics()
+    val classicDiscovery = com.cardroid.lib.ClassicDiscoverability()
     private const val TAG = "CarDroid"
     /** Per file; one previous file is kept as `.1`, so car runs survive logcat's small ring buffer. */
     private const val FILE_MAX_BYTES = 8L * 1024 * 1024

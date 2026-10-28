@@ -35,6 +35,8 @@ class Iap2Transport(
     private val adapter: BluetoothAdapter,
     private val linkSyncParams: LinkSyncParameters,
     private val onLog: (String) -> Unit = {},
+    private val diagnostics: ConnectionDiagnostics = ConnectionDiagnostics(),
+    private val diagnosticToken: Long = 0,
 ) : IapTransport {
     private val _listening = MutableStateFlow(false)
     val listening: StateFlow<Boolean> = _listening
@@ -119,6 +121,7 @@ class Iap2Transport(
                         }
                         serverSocket = server
                         _listening.value = true
+                        diagnostics.listener(diagnosticToken, ConnectionDiagnostics.Status.FULL)
                     }
                     onLog("RFCOMM listening on UUID ${Iap2Constants.SERVICE_UUID_IPHONE}")
                     while (isActive && !stopped) {
@@ -128,6 +131,7 @@ class Iap2Transport(
                             synchronized(lifecycleLock) {
                                 if (stopped || !isActive) return@withContext
                                 socket = s
+                                diagnostics.reached(diagnosticToken, ConnectionDiagnostics.Stage.SOCKET)
                             }
                             phase = "session"
                             input = s.inputStream
@@ -137,6 +141,7 @@ class Iap2Transport(
                         } finally {
                             runCatching { s.close() }
                             socket = null
+                            diagnostics.socketClosed(diagnosticToken)
                             input = null
                             output = null
                         }
@@ -145,6 +150,7 @@ class Iap2Transport(
                     throw e
                 } catch (e: Exception) {
                     if (isActive && !stopped) {
+                        diagnostics.listener(diagnosticToken, ConnectionDiagnostics.Status.FAILED, e.javaClass.simpleName)
                         onLog("RFCOMM $phase failed: ${e.javaClass.simpleName}: ${e.message}; recreating listener in 1000ms")
                     }
                 } finally {
@@ -209,6 +215,7 @@ class Iap2Transport(
                         out.write(Iap2LinkSync.DETECT_MARKER)
                         out.flush()
                         sentDetectEcho = true
+                        diagnostics.reached(diagnosticToken, ConnectionDiagnostics.Stage.DETECT)
                         onLog("  -> echoed DETECT_MARKER back to car")
                     }
                     skippedBuffer.clear()
@@ -224,6 +231,7 @@ class Iap2Transport(
                                 out.write(Iap2LinkSync.DETECT_MARKER)
                                 out.flush()
                                 sentDetectEcho = true
+                                diagnostics.reached(diagnosticToken, ConnectionDiagnostics.Stage.DETECT)
                                 onLog("rx DETECT_MARKER from car; echoed back")
                                 skippedBuffer.clear()
                             }

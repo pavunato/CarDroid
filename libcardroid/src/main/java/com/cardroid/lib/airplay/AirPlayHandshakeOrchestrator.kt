@@ -65,6 +65,7 @@ class AirPlayHandshakeOrchestrator(
     private val diagSink: ((String, ByteArray) -> Unit)? = null,
     /** Existing iAP2 auth provider to reuse for the control-channel experiment. */
     private val iapOutMfi: MfiAuthProvider? = null,
+    private val onDiagnosticStage: (com.cardroid.lib.ConnectionDiagnostics.Stage) -> Unit = {},
 ) {
     private val lifecycleLock = Any() // orders readiness publication with stop/peer EOF
     private val rtspLock = Any() // serializes control-channel requests (feedback loop + iAP out)
@@ -307,6 +308,7 @@ class AirPlayHandshakeOrchestrator(
             val recResp = synchronized(rtspLock) { rtsp.record() }
             log("AirPlay: RECORD -> ${recResp.statusCode}")
             recResp.requireSuccess("RECORD")
+            onDiagnosticStage(com.cardroid.lib.ConnectionDiagnostics.Stage.RECORD)
             if (mediaOptions != null && pairingSecret == null) log("AirPlay: media skipped (no pair-verify secret)")
             if (mediaOptions != null && pairingSecret != null) {
                 val displays=runCatching { ReceiverPlist.map(info.body)["displays"] as? List<*> }
@@ -332,6 +334,7 @@ class AirPlayHandshakeOrchestrator(
                 mediaTransport?.let {
                     check(hasWifiSession) { "Wi-Fi event session ended before media readiness" }
                     mediaOptions?.onReady?.invoke(it)
+                    onDiagnosticStage(com.cardroid.lib.ConnectionDiagnostics.Stage.MEDIA)
                 }
             }
 

@@ -29,6 +29,7 @@ import com.cardroid.lib.WifiHandoff
 class AndroidWifiHandoff(
     context: Context,
     private val log: (String) -> Unit,
+    private val onDiagnosticIssue: (String) -> Unit = {},
 ) : WifiHandoff {
 
     private val connectivity =
@@ -73,6 +74,7 @@ class AndroidWifiHandoff(
     @SuppressLint("MissingPermission")
     override fun connectToAccessory(network: WifiHandoff.NetworkInfo) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            onDiagnosticIssue("WIFI_UNAVAILABLE")
             log("WiFi handoff received for '${network.ssid}', but WifiNetworkSpecifier requires Android 10+")
             return
         }
@@ -177,7 +179,7 @@ class AndroidWifiHandoff(
             pendingCreds
         } ?: return
         log("WiFi: no reachable receiver address within ${DECISION_MS}ms; requesting join via WifiNetworkSpecifier (Android may ask for approval once)")
-        requestViaSpecifier(creds)
+        requestJoin(creds)
     }
 
     /** Claims PENDING_DECISION (cancelling the timer) and moves to [to]; returns creds or null if not claimable. */
@@ -192,7 +194,7 @@ class AndroidWifiHandoff(
     private fun joinNow(gen: Int, from: State, reason: String) {
         val creds = claim(gen, from, State.JOINING) ?: return
         log("WiFi: not reachable on current network: $reason; requesting join via WifiNetworkSpecifier (Android may ask for approval once)")
-        requestViaSpecifier(creds)
+        requestJoin(creds)
     }
 
     /**
@@ -264,7 +266,8 @@ class AndroidWifiHandoff(
             }
 
             override fun onLost(lostNetwork: Network) {
-                if (joinedNetwork == lostNetwork) {
+                if (callback === this && joinedNetwork == lostNetwork) {
+                    onDiagnosticIssue("WIFI_LOST")
                     joinedNetwork = null
                     runCatching { connectivity.bindProcessToNetwork(null) }
                 }
@@ -274,6 +277,14 @@ class AndroidWifiHandoff(
         callback = lossCb
         connectivity.registerNetworkCallback(
             NetworkRequest.Builder().addTransportType(NetworkCapabilities.TRANSPORT_WIFI).build(), lossCb)
+    }
+
+    /** Invalid credentials (specifier builder) or a refused request throw; report a typed failure instead of crashing. */
+    private fun requestJoin(creds: WifiHandoff.NetworkInfo) {
+        runCatching { requestViaSpecifier(creds) }.onFailure { t ->
+            onDiagnosticIssue("WIFI_JOIN_FAILED")
+            log("WiFi: join request failed: ${t.javaClass.simpleName}")
+        }
     }
 
     @SuppressLint("MissingPermission")
@@ -325,11 +336,14 @@ class AndroidWifiHandoff(
             }
 
             override fun onUnavailable() {
+                // Android calls this when the user rejects the connection prompt or no matching network is found.
+                if (callback === this) onDiagnosticIssue("WIFI_JOIN_FAILED")
                 log("Accessory WiFi unavailable: '${network.ssid}'")
             }
 
             override fun onLost(lostNetwork: Network) {
-                if (joinedNetwork == lostNetwork) {
+                if (callback === this && joinedNetwork == lostNetwork) {
+                    onDiagnosticIssue("WIFI_LOST")
                     joinedNetwork = null
                     runCatching { connectivity.bindProcessToNetwork(null) }
                 }

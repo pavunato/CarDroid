@@ -21,8 +21,10 @@ class CarDroidPipeline private constructor(
     mfi: MfiAuthProvider,
     private val wifi: WifiHandoff,
     private val log: (String) -> Unit,
+    private val diagnostics: ConnectionDiagnostics = ConnectionDiagnostics(),
+    private val diagnosticToken: Long = 0,
 ) {
-    private val carPlay = CarPlaySession(transport, mfi, wifi)
+    private val carPlay = CarPlaySession(transport, mfi, wifi, diagnostics = diagnostics, diagnosticToken = diagnosticToken)
     private var airPlay: AirPlayClient? = null
 
     val listening: StateFlow<Boolean>? get() = (transport as? Iap2Transport)?.listening
@@ -47,6 +49,7 @@ class CarDroidPipeline private constructor(
             log("Session: RFCOMM closed; retaining established Wi-Fi session")
             return
         }
+        diagnostics.ended(diagnosticToken, reason)
         carPlay.onSessionEnded()
         log("Session: ended ($reason); status reset")
         runCatching { onSessionEnded(reason) }
@@ -56,6 +59,7 @@ class CarDroidPipeline private constructor(
         transport.onSessionEnded = { reason -> endSession(reason) }
         transport.onLinkUp = {
             runCatching { onLinkUp() }
+            diagnostics.reached(diagnosticToken, ConnectionDiagnostics.Stage.LINK)
             carPlay.onLinkUp()
             carPlay.startControlFlow()
         }
@@ -73,8 +77,7 @@ class CarDroidPipeline private constructor(
     }
 
     fun stop() {
-        advertiser?.stop()
-        transport.stop()
+        try { advertiser?.stop() } finally { transport.stop() }
     }
 
     companion object {
@@ -89,9 +92,13 @@ class CarDroidPipeline private constructor(
             wifi: WifiHandoff,
             linkSyncParams: LinkSyncParameters = defaultLinkSyncParams(),
             log: (String) -> Unit = {},
+            diagnostics: ConnectionDiagnostics = ConnectionDiagnostics(),
+            diagnosticToken: Long = 0,
         ): CarDroidPipeline = CarDroidPipeline(
-            transport = Iap2Transport(adapter, linkSyncParams, log),
-            advertiser = IPhoneAdvertiser(adapter, identity, log),
+            transport = Iap2Transport(adapter, linkSyncParams, log, diagnostics, diagnosticToken),
+            advertiser = IPhoneAdvertiser(adapter, identity, log, diagnostics, diagnosticToken),
+            diagnostics = diagnostics,
+            diagnosticToken = diagnosticToken,
             mfi = mfi,
             wifi = wifi,
             log = log,

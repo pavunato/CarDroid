@@ -32,6 +32,8 @@ class CarPlaySession(
     private val iphoneBehavior: Boolean = false,
     private val nowPlaying: () -> NowPlayingState = { NowPlayingState() },
     private val deviceName: String = IPhoneIdentity.DEVICE_NAME,
+    private val diagnostics: ConnectionDiagnostics? = null,
+    private val diagnosticToken: Long = 0,
 ) {
     sealed interface State {
         data object Idle : State
@@ -64,6 +66,12 @@ class CarPlaySession(
 
     private val _state = MutableStateFlow<State>(State.Idle)
     val state: StateFlow<State> = _state
+    private var sessionState: State
+        get() = _state.value
+        set(value) {
+            _state.value = value
+            diagnostics?.session(diagnosticToken, value)
+        }
 
     private var requestedMfiCertificate = false
     private var availabilitySent = false
@@ -77,7 +85,7 @@ class CarPlaySession(
             Msg.MFI_AUTH_CERTIFICATE -> handleMfiCertificate(params)
             Msg.MFI_AUTH_RESPONSE -> handleMfiResponse(params)
             Msg.MFI_AUTH_FAILED ->
-                _state.value = State.Failed("Head unit reported MFi authentication failure")
+                sessionState = State.Failed("Head unit reported MFi authentication failure")
             Msg.WIRELESS_CARPLAY_AVAILABLE ->
                 transport.diagnostic("Car supports wireless CarPlay")
             Msg.DEVICE_TRANSPORT_IDENTIFIER_NOTIFICATION ->
@@ -86,13 +94,13 @@ class CarPlaySession(
             Msg.START_IDENTIFICATION ->
                 transport.diagnostic("Peer sent StartIdentification; ignoring to keep iPhone role")
             Msg.IDENTIFICATION_ACCEPTED -> {
-                _state.value = State.Identified
+                sessionState = State.Identified
                 transport.diagnostic("Peer sent IdentificationAccepted; no action in iPhone role")
             }
             Msg.IDENTIFICATION_REJECTED ->
-                _state.value = State.Failed("Head unit rejected identification")
+                sessionState = State.Failed("Head unit rejected identification")
             Msg.START_EA_SESSION -> {
-                _state.value = State.EaSessionOpen
+                sessionState = State.EaSessionOpen
                 transport.diagnostic("EA session opened (CarPlay protocol active)")
             }
             Msg.REQUEST_WIFI_INFORMATION ->
@@ -141,11 +149,11 @@ class CarPlaySession(
         transport.diagnostic("MFi cert received from car (${certBytes.size} bytes)")
 
         (mfi as? OkcarBypassProvider)?.acceptCarCertificate(certBytes)
-        _state.value = State.MfiCertReceived((mfi as? OkcarBypassProvider)?.carCertAlgorithm)
+        sessionState = State.MfiCertReceived((mfi as? OkcarBypassProvider)?.carCertAlgorithm)
 
         val okcarHash = mfi.sign(ByteArray(0))
             ?: run {
-                _state.value = State.Failed("MFi auth failed: provider returned no Okcar hash")
+                sessionState = State.Failed("MFi auth failed: provider returned no Okcar hash")
                 return
             }
         transport.sendMfiCertResponse(okcarHash)
@@ -159,14 +167,14 @@ class CarPlaySession(
      */
     private fun handleMfiResponse(params: ByteArray) {
         val responseBytes = Iap2ControlSession.firstParamValue(params)
-        _state.value = State.Authenticating(responseBytes.size)
+        sessionState = State.Authenticating(responseBytes.size)
         transport.diagnostic("MFi auth response received from car (${responseBytes.size} bytes) - accepting via extracted Okcar flow")
 
         transport.sendAuthStatusOk()
         transport.diagnostic("Sent AuthenticationSucceeded (0xAA05)")
         if (iphoneBehavior) sendPostAuthBurst()
 
-        _state.value = State.AuthComplete
+        sessionState = State.AuthComplete
 
         // Per reference flow: after AuthSucceeded, request WiFi configuration.
         transport.diagnostic("MFi auth complete; requesting accessory WiFi configuration")
@@ -185,10 +193,10 @@ class CarPlaySession(
 
     /** Drive an authentication challenge from the old generic path (kept for non-bypass providers). */
     suspend fun onAuthenticationChallenge(challenge: ByteArray) {
-        _state.value = State.Authenticating(challenge.size)
+        sessionState = State.Authenticating(challenge.size)
         val signed = mfi.sign(challenge)
             ?: run {
-                _state.value = State.Failed(
+                sessionState = State.Failed(
                     "MFi auth failed: provider returned no signature. " +
                             "Use OkcarBypassProvider or a genuine Apple Authentication Coprocessor."
                 )
@@ -203,7 +211,7 @@ class CarPlaySession(
         availabilitySent = false
         accessoryName = ""
         nowPlayingSubscribed = false; lastNowPlaying = null
-        _state.value = State.Idle
+        sessionState = State.Idle
     }
 
     fun onLinkUp() {
@@ -211,7 +219,7 @@ class CarPlaySession(
         availabilitySent = false
         accessoryName = ""
         nowPlayingSubscribed = false; lastNowPlaying = null
-        _state.value = State.LinkUp
+        sessionState = State.LinkUp
     }
 
     fun startControlFlow() {
@@ -235,7 +243,7 @@ class CarPlaySession(
                 "sent=${supportedByAccessory?.size?.div(2) ?: 0}, " +
                 "recv=${acceptedByAccessory?.size?.div(2) ?: 0}"
         )
-        _state.value = State.Identified
+        sessionState = State.Identified
         transport.sendControl(Iap2ControlSession.build(Msg.IDENTIFICATION_ACCEPTED))
         transport.diagnostic("Sent IdentificationAccepted (0x1D02)")
         // Now start MFi auth (per reference + reference client flow). After AuthSucceeded
@@ -252,7 +260,7 @@ class CarPlaySession(
 
     private fun requestWifiInformation() {
         transport.sendControl(Iap2ControlSession.build(Msg.REQUEST_WIFI_INFORMATION))
-        _state.value = State.WifiHandoffRequested
+        sessionState = State.WifiHandoffRequested
         transport.diagnostic("Sent RequestAccessoryWiFiConfigurationInformation (0x5702)")
     }
 
@@ -264,7 +272,7 @@ class CarPlaySession(
         val channel = parsed.firstOrNull { it.id == 0x0004 }?.value?.firstOrNull()?.toInt()?.and(0xFF) ?: 0
 
         if (ssid.isNullOrEmpty()) {
-            _state.value = State.Failed("WiFi information missing SSID")
+            sessionState = State.Failed("WiFi information missing SSID")
             return
         }
 
@@ -274,7 +282,7 @@ class CarPlaySession(
             bssid = bssid,
             channel = channel,
         )
-        _state.value = State.WifiHandoffReceived(ssid)
+        sessionState = State.WifiHandoffReceived(ssid)
         transport.diagnostic("Accessory WiFi information received: ssid=$ssid channel=$channel")
         wifi.connectToAccessory(network)
         if (!availabilitySent) {
@@ -340,7 +348,7 @@ class CarPlaySession(
         transport.diagnostic(
             "AirPlay start: ipv6=$ipv6 port=$port bssid=$bssid uuid=$sessionUuid fw=$firmware name=$accessoryName"
         )
-        _state.value = State.CarPlayAirPlayStart(ep)
+        sessionState = State.CarPlayAirPlayStart(ep)
         onAirPlayStart(ep)
     }
 }

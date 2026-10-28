@@ -60,4 +60,19 @@ class ConnectionSetupTest {
         assertEquals(NextStep.Kind.Connect, next.kind)
         assertEquals("Make available", next.action)
     }
+    @Test fun missingHelperWarnsThatVideoWillBeClosed() {
+        for (h in listOf(HelperClient.State.NotRunning, HelperClient.State.Connecting, HelperClient.State.Outdated)) {
+            val warning = helperWarning(h)
+            org.junit.Assert.assertNotNull(warning)
+            org.junit.Assert.assertTrue(warning!!.contains("video", ignoreCase = true))
+        }
+        org.junit.Assert.assertNull(helperWarning(HelperClient.State.Connected(1, 34)))
+        org.junit.Assert.assertNull(helperWarning(HelperClient.State.DisplayActive(2, 1)))
+    }
+    @Test fun helperWarningIsShownNearConnect() {
+        val ui = java.io.File("src/main/java/com/cardroid/app/MainActivity.kt").readText()
+        val card = ui.indexOf("StepCard(\n")
+        val warn = ui.indexOf("helperWarning(helper)")
+        org.junit.Assert.assertTrue(card > 0 && warn > card && warn - card < 600)
+    }
 }
