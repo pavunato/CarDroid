@@ -36,9 +36,12 @@ class ActivityLauncher(private val log: (String) -> Unit) {
     }
 
     /** Launches [target] ("pkg/cls" or "pkg") on [displayId]. Returns the ActivityManager start result (>= 0 is success). */
-    fun launch(displayId: Int, target: String, flags: Int = 0): Int {
+    fun launch(displayId: Int, target: String, flags: Int = 0, separateTask: Boolean = false): Int {
         val intent = buildIntent(target)
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        // Standard activities get a separate task per panel instead of stealing a dashboard task.
+        // Apps declaring singleTask/singleInstance may still enforce their own global instance.
+        if (separateTask) intent.addFlags(Intent.FLAG_ACTIVITY_MULTIPLE_TASK)
         if (flags and HelperProtocol.LAUNCH_CLEAR_TASK != 0) intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK)
         return start(displayId, intent)
     }

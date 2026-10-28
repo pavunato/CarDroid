@@ -23,7 +23,15 @@ Use the included Gradle wrapper. Configure your local SDK through the environmen
 ./gradlew :app:assembleDebug
 ```
 
-Output: `app/build/outputs/apk/debug/app-debug.apk` (~8.4 MB).
+Output: `app/build/outputs/apk/debug/app-debug.apk`.
+
+Run the JVM regression suites with Java 17 and the same SDK:
+
+```bash
+./gradlew :app:testDebugUnitTest :tools-runner:test
+```
+
+Unit tests and APK assembly do not validate rendering, input injection, third-party app launch modes, or receiver behavior. Those require a phone with the Shizuku/ADB helper and a receiver (or appropriate device test harness).
 
 ## Install
 

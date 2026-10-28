@@ -249,7 +249,7 @@ object HelperMain {
                 val launchable = context.packageManager.queryIntentActivities(android.content.Intent(android.content.Intent.ACTION_MAIN)
                     .addCategory(android.content.Intent.CATEGORY_LAUNCHER).setPackage(expected), 0)
                 check(expected != "com.cardroid.app" && launchable.any { it.activityInfo.name == component.className }) { "not a launchable panel app" }
-                launcher.launch(id, request.target)
+                launcher.launch(id, request.target, separateTask = true)
             } else {
                 val code = HelperProtocol.parseKey(body)
                 check(code == 4) { "panel key must be Back" }

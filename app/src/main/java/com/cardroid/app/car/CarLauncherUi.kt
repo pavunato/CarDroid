@@ -51,7 +51,7 @@ import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
-import androidx.compose.ui.platform.LocalContext
+
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
@@ -103,15 +103,20 @@ private sealed interface Overlay {
 
 @Composable
 fun CarLauncherScreen(apps: List<CarApp>, prefs: CarLauncherPrefs, homeSignal: Int, onLaunch: (CarApp) -> Unit) {
-    val context = LocalContext.current
+
     val pinned by prefs.pinned.collectAsState()
     val hidden by prefs.hidden.collectAsState()
-    val tasksAvailable by CarDisplayState.tasksAvailable.collectAsState()
+    val tasksAvailable = true // launcher-owned app history does not need shell task enumeration
     val arranged = remember(apps, pinned, hidden) { CarLauncherLogic.arrange(apps, { it.target }, pinned, hidden) }
     val hiddenApps = remember(apps, hidden) { apps.filter { it.target in hidden } }
     var overlay by remember { mutableStateOf<Overlay>(Overlay.None) }
+    val appTarget by CarDisplayState.appTarget.collectAsState()
+    val selectedApp = remember(apps, appTarget) { apps.firstOrNull { it.target == appTarget || it.packageName == appTarget } }
+    var embeddedDisplayId by remember { mutableIntStateOf(-1) }
+    val launchEmbedded: (CarApp) -> Unit = { overlay = Overlay.None; onLaunch(it) }
     val scope = rememberCoroutineScope()
 
+    LaunchedEffect(appTarget) { if (appTarget != null) overlay = Overlay.None }
     LaunchedEffect(apps) { prefs.prune(apps.map { it.target }.toSet()) }
     LaunchedEffect(hiddenApps.isEmpty()) { if (hiddenApps.isEmpty() && overlay == Overlay.Hidden) overlay = Overlay.None }
     LaunchedEffect(tasksAvailable) { if (!tasksAvailable && overlay == Overlay.Recents) overlay = Overlay.None }
@@ -121,6 +126,7 @@ fun CarLauncherScreen(apps: List<CarApp>, prefs: CarLauncherPrefs, homeSignal: I
     val pager = remember { mutableStateOf<androidx.compose.foundation.pager.PagerState?>(null) }
     fun goHome(animate: Boolean) {
         overlay = Overlay.None
+        CarDisplayState.showDashboard()
         pager.value?.let { p -> scope.launch { if (animate) p.animateScrollToPage(0) else p.scrollToPage(0) } }
     }
     LaunchedEffect(homeSignal) { if (homeSignal > 0) goHome(animate = false) }
@@ -140,7 +146,13 @@ fun CarLauncherScreen(apps: List<CarApp>, prefs: CarLauncherPrefs, homeSignal: I
                 center = Offset(size.width * 0.92f, -size.height * 0.15f), radius = size.width * 0.55f))
         }
     ) {
-        val atHome = overlay == Overlay.None && (pager.value?.currentPage ?: 0) == 0
+        val atHome = selectedApp == null && overlay == Overlay.None && (pager.value?.currentPage ?: 0) == 0
+        fun back() {
+            if (overlay != Overlay.None) overlay = Overlay.None
+            else if (selectedApp != null) { if (embeddedDisplayId >= 0) CarDisplayState.panelBack(embeddedDisplayId) }
+            else goHome(animate = true)
+        }
+        BackHandler(enabled = selectedApp != null && overlay == Overlay.None) { back() }
         Dock(
             homeSelected = atHome,
             recentsVisible = tasksAvailable,
@@ -150,7 +162,7 @@ fun CarLauncherScreen(apps: List<CarApp>, prefs: CarLauncherPrefs, homeSignal: I
             hiddenSelected = overlay == Overlay.Hidden,
             onHome = { goHome(animate = true) },
             onRecents = { overlay = if (overlay == Overlay.Recents) Overlay.None else Overlay.Recents },
-            onBack = { if (overlay != Overlay.None) overlay = Overlay.None else goHome(animate = true) },
+            onBack = { back() },
             onHidden = { overlay = if (overlay == Overlay.Hidden) Overlay.None else Overlay.Hidden },
         )
         Box(Modifier.weight(1f).fillMaxHeight()) {
@@ -159,8 +171,15 @@ fun CarLauncherScreen(apps: List<CarApp>, prefs: CarLauncherPrefs, homeSignal: I
             val blur by animateDpAsState(if (panelOpen) 18.dp else 0.dp, tween(220), label = "gridBlur")
             Box(Modifier.fillMaxSize().onGloballyPositioned { origin = it.positionInRoot() }.then(if (blur > 0.dp) Modifier.blur(blur) else Modifier)) {
                 AppPages(arranged, pinned.toSet(), focusKey = (overlay as? Overlay.Menu)?.app?.target,
-                    onPager = { pager.value = it }, onLaunch = onLaunch, prefs = prefs,
+                    onPager = { pager.value = it }, onLaunch = launchEmbedded, prefs = prefs,
+                    contentVisible = selectedApp == null && overlay == Overlay.None && onTop,
                     onLongPress = { app, rect -> overlay = Overlay.Menu(app, rect.translate(-origin)) })
+            }
+            if (selectedApp != null) key(selectedApp.target) {
+                // Block hits in rounded corners / loading gaps without intercepting app touches.
+                Box(Modifier.fillMaxSize().background(Car.Bg).clickable(onClickLabel = "Embedded app background") {})
+                NativeAppPanel(selectedApp, Modifier.fillMaxSize(), visible = overlay == Overlay.None && onTop,
+                    showChooser = false, onDisplayChanged = { embeddedDisplayId = it }, onChoose = {})
             }
             // Scrim + overlays
             // Panels get a dark scrim; the long-press menu dims the other cells instead (so the pressed app stays in context).
@@ -182,7 +201,7 @@ fun CarLauncherScreen(apps: List<CarApp>, prefs: CarLauncherPrefs, homeSignal: I
                 }
             }
             androidx.compose.animation.AnimatedVisibility(overlay == Overlay.Recents, enter = fadeIn(tween(160)) + scaleIn(tween(180), 0.97f), exit = fadeOut(tween(120))) {
-                RecentsPanel(ownPackage = context.packageName, onPick = { id -> CarDisplayState.moveTaskToFront(id); overlay = Overlay.None })
+                RecentsPanel(apps, onPick = launchEmbedded)
             }
             androidx.compose.animation.AnimatedVisibility(overlay == Overlay.Hidden, enter = fadeIn(tween(160)) + scaleIn(tween(180), 0.97f), exit = fadeOut(tween(120))) {
                 HiddenPanel(hiddenApps, onUnhide = { prefs.unhide(it.target) })
@@ -267,7 +286,7 @@ private fun DockButton(
 @Composable
 private fun AppPages(
     apps: List<CarApp>, pinned: Set<String>, focusKey: String?, onPager: (androidx.compose.foundation.pager.PagerState) -> Unit,
-    onLaunch: (CarApp) -> Unit, onLongPress: (CarApp, Rect) -> Unit, prefs: CarLauncherPrefs,
+    onLaunch: (CarApp) -> Unit, onLongPress: (CarApp, Rect) -> Unit, prefs: CarLauncherPrefs, contentVisible: Boolean,
 ) {
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val cols = if (maxWidth >= 1000.dp) 7 else 6
@@ -285,10 +304,10 @@ private fun AppPages(
                 }
             }
             Box(Modifier.weight(1f).fillMaxWidth()) {
-                // Keep both browser instances mounted outside the lazy pager.
-                // Visibility changes never recreate the WebViews or their video/history state.
+                // Keep native dashboard displays mounted outside the lazy pager.
+                // Visibility changes disable input without discarding their tasks.
                 Box(Modifier.fillMaxSize().zIndex(if (state.currentPage == 0) 1f else -1f)) {
-                    DashboardHome(apps, prefs, visible = state.currentPage == 0)
+                    DashboardHome(apps, prefs, visible = contentVisible && state.currentPage == 0)
                 }
                 HorizontalPager(state, Modifier.fillMaxSize(), beyondViewportPageCount = 0, key = { it },
                     userScrollEnabled = state.currentPage != 0) { page ->
@@ -471,22 +490,17 @@ private fun PanelFrame(title: String, subtitle: String, content: @Composable () 
 }
 
 @Composable
-private fun RecentsPanel(ownPackage: String, onPick: (Int) -> Unit) {
-    val context = LocalContext.current
-    val tasks by CarDisplayState.tasks.collectAsState()
-    var requested by remember { mutableStateOf<Boolean?>(null) }
-    LaunchedEffect(Unit) { requested = CarDisplayState.listTasks(12) }
-    val recents = remember(tasks) { CarLauncherLogic.recents(tasks, ownPackage) }
-    PanelFrame("Recent apps", "Running on the car display") {
+private fun RecentsPanel(apps: List<CarApp>, onPick: (CarApp) -> Unit) {
+    val targets by CarDisplayState.recentAppTargets.collectAsState()
+    val recents = remember(apps, targets) { targets.mapNotNull { target -> apps.firstOrNull { it.target == target || it.packageName == target } }.distinctBy { it.target } }
+    PanelFrame("Recent apps", "Open beside the sidebar") {
         when {
             recents.isNotEmpty() -> LazyRow(contentPadding = PaddingValues(horizontal = 40.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                items(recents, key = { it.taskId }) { t ->
-                    val label = remember(t.pkg) { CarIcons.label(context, t.pkg) }
-                    PanelCard(iconKey = t.component.ifEmpty { t.pkg }, label = label, onClick = { onPick(t.taskId) })
+                items(recents, key = { it.target }) { app ->
+                    PanelCard(iconKey = app.target, label = app.label, onClick = { onPick(app) })
                 }
             }
-            requested == false -> PanelNote("Recent apps need the car display helper.")
-            else -> PanelNote("No other apps are open on the car display.")
+            else -> PanelNote("No apps have been opened yet.")
         }
     }
 }

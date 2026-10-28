@@ -87,8 +87,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        // Accessibility and WRITE_SETTINGS are granted from system settings; refresh
-        // when the Activity returns to the foreground.
+        // Refresh runtime permissions when the Activity returns from system settings.
         permissionRevision.value += 1
         ShizukuHelperStarter.get(applicationContext).initialize()
     }
@@ -121,9 +120,6 @@ class MainActivity : ComponentActivity() {
                         },
                         onAppSettings = {
                             startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
-                        },
-                        onEnableTouch = {
-                            startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS))
                         },
                         onStartBt = {
                             startService(Intent(this, CarDroidService::class.java).setAction(CarDroidService.ACTION_START_BT))
@@ -272,7 +268,6 @@ private fun CarDroidScreen(
     onRequestPerms: () -> Unit,
     onAppSettings: () -> Unit,
     onStartBt: () -> Unit,
-    onEnableTouch: () -> Unit,
     onStop: () -> Unit,
     onEnableBluetooth: () -> Unit,
     bluetoothEnabled: () -> Boolean,
@@ -281,7 +276,6 @@ private fun CarDroidScreen(
     val state by CarDroidLog.state.collectAsState()
     val useHardcodedKeys by CarDroidSettings.useHardcodedMfiKeys.collectAsState()
     val autoStartBluetooth by CarDroidSettings.autoStartBluetooth.collectAsState()
-    val touchEnabled by RemoteControlService.enabled.collectAsState()
     val carDisplayId by CarDisplayState.displayId.collectAsState()
     val context = LocalContext.current
     val starter = remember(context) { ShizukuHelperStarter.get(context).also { it.initialize() } }
@@ -412,12 +406,10 @@ private fun CarDroidScreen(
                     bluetoothOn = bluetoothOn,
                     shizuku = shizuku,
                     helper = helper,
-                    touchEnabled = touchEnabled,
                     onPermissions = onRequestPerms,
                     onAppSettings = onAppSettings,
                     onBluetooth = onEnableBluetooth,
                     onShizuku = { if (shizuku is ShizukuHelperStarter.State.NeedsPermission) starter.requestPermission() else starter.openShizuku(context) },
-                    onTouch = onEnableTouch,
                 )
             }
         }
@@ -500,12 +492,10 @@ private fun ConnectionChecklist(
     bluetoothOn: Boolean,
     shizuku: ShizukuHelperStarter.State,
     helper: HelperClient.State,
-    touchEnabled: Boolean,
     onPermissions: () -> Unit,
     onAppSettings: () -> Unit,
     onBluetooth: () -> Unit,
     onShizuku: () -> Unit,
-    onTouch: () -> Unit,
 ) {
     val helperReady = helper is HelperClient.State.Connected || helper is HelperClient.State.DisplayActive
     val shizukuRunning = shizuku !is ShizukuHelperStarter.State.Unavailable &&
@@ -539,15 +529,15 @@ private fun ConnectionChecklist(
             TextButton(onClick = onAppSettings) { Text("Manage permissions") }
         }
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = .5f))
-        ChecklistGroup("Display setup", listOf(shizukuRunning, helperAccess, touchEnabled).count { it }, 3) {
+        ChecklistGroup("Display setup", listOf(shizukuRunning, helperAccess).count { it }, 2) {
             ChecklistRow("Shizuku service", if (shizuku is ShizukuHelperStarter.State.Unsupported) "Update required"
                 else if (shizuku is ShizukuHelperStarter.State.Error) "Could not check" else "Not running",
                 "Shizuku lets CarDroid start the helper that runs apps on a separate display. Open Shizuku and start its service; after a phone restart, you may need to start it again.", shizukuRunning,
                 if (shizukuRunning) null else "Open", onShizuku)
             ChecklistRow("Shizuku access", "Needs access", "In Shizuku, allow CarDroid to use its service. This lets CarDroid start the display helper without a computer each time.",
                 helperAccess, if (helperAccess) null else "Set up", onShizuku)
-            ChecklistRow("Touch control", "Optional", "Turn on CarDroid in Android Accessibility to let car-screen taps, swipes, Home and Back control phone mirroring. It also helps open the screen-sharing flow. CarDroid does not read screen text.",
-                touchEnabled, if (touchEnabled) null else "Enable", onTouch)
+            Text("The display helper handles touch, Home and Back. Android Accessibility and root are not needed. An ADB-started helper also works without Shizuku.",
+                style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
 
     }

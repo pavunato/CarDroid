@@ -88,11 +88,11 @@ class RemoteControlService : AccessibilityService() {
     private var active=mapOf<Int,Held>()
     private var lastIds=setOf<Int>()
     private var busy=false
-    private val cornerHome by lazy { com.cardroid.app.car.CornerHomeOverlay(this) }
-    override fun onServiceConnected() { instance=this; enabled.value=true; CarDroidLog.log("Touch: accessibility bridge connected"); cornerHome.start() }
+    // Legacy mirroring bridge only. The helper launcher owns its persistent navigation rail.
+    override fun onServiceConnected() { instance=this; enabled.value=true; CarDroidLog.log("Touch: accessibility bridge connected") }
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {}
-    override fun onInterrupt() { releaseTouches(); cornerHome.stop() }
-    override fun onDestroy() { releaseTouches(); cornerHome.stop(); instance=null; hidRegistry=null; enabled.value=false; super.onDestroy() }
+    override fun onInterrupt() { releaseTouches() }
+    override fun onDestroy() { releaseTouches(); instance=null; hidRegistry=null; enabled.value=false; super.onDestroy() }
     private fun enqueue(contacts: List<RemoteTouch.Contact>) {
         val ids=contacts.filter { it.down }.map { it.id }.toSet()
         val edge=ids!=lastIds

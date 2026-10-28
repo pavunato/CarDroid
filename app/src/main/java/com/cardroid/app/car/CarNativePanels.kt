@@ -76,16 +76,19 @@ internal fun DashboardHome(apps: List<CarApp>, prefs: CarLauncherPrefs, visible:
 }
 
 @Composable
-private fun NativeAppPanel(app: CarApp?, modifier: Modifier, visible: Boolean, onChoose: () -> Unit) {
+internal fun NativeAppPanel(app: CarApp?, modifier: Modifier, visible: Boolean,
+    showChooser: Boolean = true, onDisplayChanged: (Int) -> Unit = {}, onChoose: () -> Unit) {
     var error by remember(app?.target) { mutableStateOf<String?>(null) }
     var panel by remember { mutableStateOf<NativePanelView?>(null) }
     val helper by com.cardroid.app.helper.HelperClient.status.collectAsState()
+    val displayChanged by rememberUpdatedState(onDisplayChanged)
     LaunchedEffect(helper) {
         if (helper is com.cardroid.app.helper.HelperClient.State.Connected || helper is com.cardroid.app.helper.HelperClient.State.DisplayActive) panel?.launchApp()
+        else panel?.helperDisconnected()
     }
     Column(modifier) {
         // A subtle, full-width hit target opens the chooser; transparent so no strip shows above the app.
-        Box(Modifier.fillMaxWidth().height(32.dp).clickable(onClickLabel = "Change app", onClick = onChoose), contentAlignment = Alignment.Center) {
+        if (showChooser) Box(Modifier.fillMaxWidth().height(32.dp).clickable(enabled = visible, onClickLabel = "Change app", onClick = onChoose), contentAlignment = Alignment.Center) {
             Box(Modifier.width(40.dp).height(4.dp).clip(RoundedCornerShape(2.dp)).background(Car.TextDim))
         }
         Column(Modifier.fillMaxWidth().weight(1f).clip(RoundedCornerShape(22.dp)).background(Car.Surface)) {
@@ -94,8 +97,9 @@ private fun NativeAppPanel(app: CarApp?, modifier: Modifier, visible: Boolean, o
                 error?.let { Text(it, color = Car.Accent, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) }
                 // Keep the TextureView attached off-page to retain the display and native task.
                 AndroidView(modifier = Modifier.fillMaxWidth().weight(1f), factory = { context ->
-                    NativePanelView(context, app) { error = it }.also { panel = it }
-                }, update = { it.inputEnabled = visible }, onRelease = { it.releasePanel(); panel = null })
+                    NativePanelView(context, app, { displayChanged(it) }) { error = it }.also { panel = it }
+                }, update = { it.inputEnabled = visible && (helper is com.cardroid.app.helper.HelperClient.State.Connected || helper is com.cardroid.app.helper.HelperClient.State.DisplayActive) },
+                    onRelease = { it.releasePanel(); panel = null })
             }
         }
     }
@@ -103,10 +107,16 @@ private fun NativeAppPanel(app: CarApp?, modifier: Modifier, visible: Boolean, o
 
 /** App-owned, untrusted displays: avoids interfering with the phone's keyguard/IME focus. */
 private class NativePanelView(context: Context, private val app: CarApp,
+    private val onDisplayChanged: (Int) -> Unit,
     private val reportError: (String?) -> Unit) : TextureView(context), TextureView.SurfaceTextureListener {
     private var virtualDisplay: android.hardware.display.VirtualDisplay? = null
     private var output: Surface? = null
-    var inputEnabled = true
+    private var appLaunched = false
+    var inputEnabled = false
+        set(value) {
+            if (field && !value) virtualDisplay?.display?.displayId?.let { CarDisplayState.panelTouch(it, emptyList()) }
+            field = value
+        }
     init { surfaceTextureListener = this; isOpaque = true }
     override fun onSurfaceTextureAvailable(texture: SurfaceTexture, width: Int, height: Int) {
         try {
@@ -118,14 +128,17 @@ private class NativePanelView(context: Context, private val app: CarApp,
             val flags = android.hardware.display.DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY or (1 shl 8) or (1 shl 6)
             virtualDisplay = manager.createVirtualDisplay("CarDroid Panel: ${app.packageName}", width, height, 160, output, flags)
                 ?: error("Could not create app display")
+            onDisplayChanged(virtualDisplay!!.display.displayId)
             launchApp()
         } catch (t: Throwable) { fail(t); releasePanel() }
     }
     fun launchApp() {
+        if (appLaunched) return
         val id = virtualDisplay?.display?.displayId ?: return
-        if (CarDisplayState.panelLaunch(id, app.target)) reportError(null)
+        if (CarDisplayState.panelLaunch(id, app.target)) { appLaunched = true; reportError(null) }
         else reportError("Start the display helper, then reselect the app.")
     }
+    fun helperDisconnected() { appLaunched = false; inputEnabled = false }
     override fun onSurfaceTextureSizeChanged(texture: SurfaceTexture, width: Int, height: Int) {
         if (width > 0 && height > 0) runCatching {
             texture.setDefaultBufferSize(width, height); virtualDisplay?.resize(width, height, 160)
@@ -148,6 +161,8 @@ private class NativePanelView(context: Context, private val app: CarApp,
         return true
     }
     fun releasePanel() {
+        appLaunched = false
+        onDisplayChanged(-1)
         virtualDisplay?.display?.displayId?.let { CarDisplayState.panelTouch(it, emptyList()) }
         runCatching { virtualDisplay?.release() }; virtualDisplay = null
         output?.release(); output = null

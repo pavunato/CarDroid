@@ -15,10 +15,13 @@
 - **Run Android apps on the car screen.** Home shows two apps side by side, such as YouTube and Maps, on a separate display from the phone.
 - **Switch and reload panel apps.** Tap the small indicator above a panel to pick another app (recently used apps are listed first) or reload the current one.
 - **Customize the launcher.** Arrange widgets, browse every app in the app grid, and return to recent apps from the side rail.
+- **Keep navigation visible.** Grid, widget, recent-app and mapped receiver shortcuts open one app inside launcher-owned content beside the persistent rail, not over the car display. Back goes to that app; Home returns to the two-panel dashboard. There is no floating Home button.
 - **Hear phone audio through the car speakers.** Media, navigation, and assistant audio play in the car at full volume, independent of the phone's volume.
 - **Control apps from the car.** Car touchscreen and media keys are routed back to the apps on the car display.
 - **Connect wirelessly.** CarDroid sets up the session over Bluetooth, then moves media to Wi-Fi, and can start automatically when Bluetooth connects.
-- **Fall back to phone mirroring** when a separate display isn't available.
+- **Use the shell display helper.** Start it through Shizuku or ADB; root and Android Accessibility “Touch control” are not required. Phone mirroring is currently disabled—there is no screen-capture fallback if the helper is unavailable.
+
+Recent apps are launcher session history, not the Android task switcher. Dashboard panels stay mounted when another page or single app is shown, with input disabled while covered. Android apps with restrictive launch modes (for example `singleTask`), secure video, or secondary-display limitations may not support independent instances; validate your apps on a device.
 
 ## Build and test
 

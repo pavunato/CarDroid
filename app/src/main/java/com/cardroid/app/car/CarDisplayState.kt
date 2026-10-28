@@ -9,7 +9,7 @@ import kotlinx.coroutines.flow.asStateFlow
 /**
  * Process-wide car display state shared between CarDroidService (owner of the HelperClient) and the UI (CarLauncherActivity, MainActivity).
  * CarDroidService calls [attach] with its HelperClient and mirrors HelperClient.status into [displayId]; everything here is a no-op / false
- * while no display is active. The launcher uses [launch]/[goHome]/[listTasks]/[moveTaskToFront] as the helper fallback and for Recents.
+ * while no display is active. Normal opens select embedded content; task commands are retained for diagnostics.
  */
 object CarDisplayState {
     const val DISPLAY_NAME = "CarDroid Car"
@@ -65,11 +65,24 @@ object CarDisplayState {
         if (id != _displayId.value) {
             _displayId.value = id
             _tasks.value = emptyList(); _tasksAvailable.value = true; _lastError.value = null
+            showDashboard()
             if (id < 0) { _launcherOnTop.value = false; _recentsRequest.value = false }
         }
     }
 
-    fun launch(target: String, flags: Int = 0): Boolean = client?.launch(target, flags) ?: false
+    private val _appTarget = MutableStateFlow<String?>(null)
+    val appTarget: StateFlow<String?> = _appTarget.asStateFlow()
+    private val _recentAppTargets = MutableStateFlow<List<String>>(emptyList())
+    val recentAppTargets: StateFlow<List<String>> = _recentAppTargets.asStateFlow()
+    fun openApp(target: String): Boolean {
+        if (!active || target.isBlank()) return false
+        _appTarget.value = target
+        _recentAppTargets.value = CarLauncherLogic.pushRecent(_recentAppTargets.value, target)
+        return true
+    }
+    fun showDashboard() { _appTarget.value = null }
+    /** Normal launches are selections, not helper LAUNCH on the outer display. */
+    fun launch(target: String): Boolean = openApp(target)
     fun panelTouch(id: Int, contacts: List<HelperProtocol.TouchContact>): Boolean = client?.panelTouch(id, contacts) ?: false
     fun panelLaunch(id: Int, target: String): Boolean = client?.panelLaunch(id, target) ?: false
     fun panelBack(id: Int): Boolean = client?.panelBack(id) ?: false

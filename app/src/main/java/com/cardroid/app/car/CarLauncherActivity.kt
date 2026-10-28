@@ -15,7 +15,7 @@ import com.cardroid.app.CarDroidLog
  * UI: [LauncherContent] -> CarLauncherScreen (CarLauncherUi.kt). Behaviour:
  *  - BACK is consumed (a finishing launcher root would expose the Pixel SecondaryDisplayLauncher),
  *  - finishes itself when it is not on the car display (display 0 / wrong name) or when its display is removed,
- *  - launches go through [CarApps.launch] (direct with setLaunchDisplayId, helper fallback).
+ *  - launches select a NativeAppPanel beside the persistent rail.
  */
 class CarLauncherActivity : ComponentActivity() {
     private val displayManager by lazy { getSystemService(DisplayManager::class.java) }
@@ -53,7 +53,7 @@ class CarLauncherActivity : ComponentActivity() {
         setContent { LauncherContent(installedApps) }
     }
 
-    override fun onNewIntent(intent: android.content.Intent) { super.onNewIntent(intent); homeSignal++; CarDroidLog.log("CarLauncher: onNewIntent (brought to front)") }
+    override fun onNewIntent(intent: android.content.Intent) { super.onNewIntent(intent); CarDisplayState.showDashboard(); homeSignal++; CarDroidLog.log("CarLauncher: onNewIntent (brought to front)") }
 
     override fun onResume() {
         super.onResume()
@@ -75,7 +75,7 @@ class CarLauncherActivity : ComponentActivity() {
     @Composable
     private fun LauncherContent(apps: List<CarApp>) {
         com.cardroid.app.CarDroidTheme {
-            CarLauncherScreen(apps, prefs, homeSignal) { app -> CarApps.launch(this@CarLauncherActivity, app, ownDisplayId) }
+            CarLauncherScreen(apps, prefs, homeSignal) { app -> CarApps.launch(app) }
         }
     }
 }
