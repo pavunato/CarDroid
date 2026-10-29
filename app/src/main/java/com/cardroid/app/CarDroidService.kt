@@ -283,7 +283,6 @@ class CarDroidService : Service() {
             maxCanvasLongSide = if (nativeCanvas) com.cardroid.lib.airplay.VideoCanvas.NATIVE_MAX_LONG_SIDE else com.cardroid.lib.airplay.VideoCanvas.STANDARD_LONG_SIDE,
             onReady = { transport ->
                 mediaTransport = transport
-                RemoteControlService.setHidRegistry(transport.hidRegistry)
                 val hc = helperClient
                 mode = if (hc != null && hc.isConnected) Mode.HELPER else Mode.NONE
                 transport.onCommand = { command ->
@@ -677,8 +676,6 @@ class CarDroidService : Service() {
         transport?.onKeyFrameNeeded = null; transport?.onPeerEnded = null
         runCatching { transport?.close() }
         mediaTransport = null
-        RemoteControlService.setHidRegistry(null)
-        RemoteControlService.setSharing(false)
         synchronized(captureLock) { helperAudio?.close(); helperAudio = null }
         LandscapeSharing.restore(applicationContext)
         pendingAirPlayEndpoint = null; joinedNetwork = null
@@ -698,10 +695,8 @@ class CarDroidService : Service() {
         helperClient?.stopDisplay(); mode = Mode.NONE
         mediaTransport?.close()
         LandscapeSharing.restore(applicationContext)
-        RemoteControlService.setSharing(false)
         synchronized(captureLock) { helperAudio?.close(); helperAudio = null }
         mediaTransport = null
-        RemoteControlService.setHidRegistry(null)
         ctrlInt?.stop(); ctrlInt = null
         mdns?.stop(); mdns = null
         val oldPipeline = pipeline; pipeline = null

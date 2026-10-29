@@ -31,7 +31,7 @@ class EmbeddedLauncherRegressionTest {
     @Test fun helperSetupDoesNotRequestAccessibilityOrFloatingHome() {
         val setup = source("MainActivity.kt")
         assertFalse("Helper routes touch without Accessibility", setup.contains("ChecklistRow(\"Touch control\""))
-        assertFalse("Persistent rail replaces floating Home", source("RemoteControlService.kt").contains("cornerHome.start()"))
+        assertFalse("No Accessibility service may be declared (Play Protect blocks it)", File("src/main/AndroidManifest.xml").readText().contains("BIND_ACCESSIBILITY_SERVICE"))
     }
 
     @Test fun recentsReopenEmbeddedAppsNotOuterTasks() {

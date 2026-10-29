@@ -1,3 +1,2 @@
 <resources>
-    <string name="remote_control_description">Lets a connected CarPlay receiver send touch and scroll gestures to this phone only while CarDroid is sharing. CarDroid does not read screen text or window contents.</string>
 </resources>

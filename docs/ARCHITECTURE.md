@@ -25,7 +25,7 @@ flowchart LR
     Session -->|Receiver input| Helper
 ```
 
-The helper starts through Shizuku or ADB with shell privileges; root is not needed. Current service modes are `NONE` and `HELPER`: phone mirroring is disabled and no MediaProjection fallback is offered. Android Accessibility is not part of helper setup or input routing. The legacy gesture bridge remains in the source but no longer activates a floating Home overlay.
+The helper starts through Shizuku or ADB with shell privileges; root is not needed. Current service modes are `NONE` and `HELPER`: phone mirroring is disabled and no MediaProjection fallback is offered. Android Accessibility is not part of helper setup or input routing. The app declares no Accessibility service, so Play Protect does not treat it as one.
 
 ## Persistent launcher and embedded apps
 
@@ -33,7 +33,7 @@ The helper starts through Shizuku or ADB with shell privileges; root is not need
 
 Single-app content reuses `NativeAppPanel`: an app-owned private virtual display rendered into a `TextureView`. The shell helper validates display ownership and the chosen launcher component before launching or injecting input. Panel launches request separate tasks for standard activities, avoiding reuse of a dashboard task; third-party `singleTask`/`singleInstance` behavior can still prevent independent instances. The existing two dashboard panels remain mounted behind the content view. Covered/off-page panels reject touch and release held contacts when disabled; a background hit shield prevents taps reaching the covered launcher. Input is also disabled when the launcher is paused or the helper disconnects.
 
-Rail and hardware Back reach the selected panel via helper `PANEL_KEY` (Back only); overlay Back first closes the overlay. Home returns to the dashboard, releasing the single-app panel. Hardware Home uses helper `GO_HOME`, whose launcher intent resets selection. A replaced/lost car display clears stale selection. The persistent rail replaces the former accessibility-owned corner Home button; that implementation is retained but not activated. Low-level helper LAUNCH/task commands remain available for diagnostics, not normal launcher navigation.
+Rail and hardware Back reach the selected panel via helper `PANEL_KEY` (Back only); overlay Back first closes the overlay. Home returns to the dashboard, releasing the single-app panel. Hardware Home uses helper `GO_HOME`, whose launcher intent resets selection. A replaced/lost car display clears stale selection. The persistent rail replaces the former accessibility-owned corner Home button. Low-level helper LAUNCH/task commands remain available for diagnostics, not normal launcher navigation.
 
 The connection layer handles discovery, pairing, Wi-Fi handoff, media transport, and receiver commands. The authentication bridge supplies the authentication operations required by that session. Compatibility depends on the phone, Android version, permissions, and receiver.
 
