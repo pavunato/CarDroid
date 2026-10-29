@@ -11,6 +11,7 @@ import android.view.Surface
 /**
  * Creates the car virtual display (scrcpy NewDisplayCapture flag set, Apache-2.0 Genymobile/scrcpy) on an encoder surface
  * as com.android.shell, keeps it awake, and tears everything down. Every failure throws with a readable message; the caller reports ERROR.
+ * The display lives on a [CarVirtualDevice] when available (own power group, survives the phone sleeping/locking), else falls back to a plain one.
  * DESTROY_CONTENT_ON_REMOVAL is deliberately not set: apps move back to the phone when the car display ends.
  */
 @SuppressLint("PrivateApi", "DiscouragedPrivateApi", "SoonBlockedPrivateApi")
@@ -20,6 +21,7 @@ class HelperDisplay(
 ) {
     private var encoder: DisplayEncoder? = null
     private var display: VirtualDisplay? = null
+    private var virtualDevice: CarVirtualDevice? = null
     private var surface: Surface? = null
     private var relay: FrameRelay? = null
     private var keepActive: Thread? = null
@@ -43,11 +45,12 @@ class HelperDisplay(
                 .also { relay = it }
                 .start()
                 .also { log("Frame relay active (GL re-draw every ${FrameRelay.IDLE_MS} ms when idle)") }
-            val vd = dm.createVirtualDisplay("CarDroid Car", width, height, dpi, target, flags())
+            val vd = createOnVirtualDevice(target)
+                ?: dm.createVirtualDisplay("CarDroid Car", width, height, dpi, target, flags())
                 ?: error("createVirtualDisplay returned null")
             display = vd
             displayId = vd.display.displayId
-            log("Display created id=$displayId ${width}x$height/$dpi flags=0x${Integer.toHexString(flags())}")
+            log("Display created id=$displayId ${width}x$height/$dpi flags=0x${Integer.toHexString(vd.display.flags)} virtualDevice=${virtualDevice != null}")
             lockCarOrientation(displayId)
             setImePolicyLocal(displayId)
             enc.startDraining()
@@ -57,6 +60,19 @@ class HelperDisplay(
     }
 
     fun requestKeyFrame() { encoder?.requestKeyFrame() }
+
+    /** Keeps the car display awake and unlocked while the phone sleeps; null means use the plain virtual display. */
+    private fun createOnVirtualDevice(target: Surface): VirtualDisplay? {
+        val device = CarVirtualDevice.open(log) ?: return null
+        return try {
+            device.createDisplay("CarDroid Car", width, height, dpi, target, flags() and (OWN_DISPLAY_GROUP or DEVICE_DISPLAY_GROUP).inv())
+                .also { virtualDevice = device }
+        } catch (t: Throwable) {
+            val c = (t as? java.lang.reflect.InvocationTargetException)?.cause ?: t
+            log("Virtual device display failed, using a plain virtual display (${c.javaClass.simpleName}: ${c.message})")
+            device.close(); null
+        }
+    }
 
     private fun flags(): Int {
         // Private, undecorated display: keep SystemUI's shade and secondary-keyguard
@@ -125,6 +141,7 @@ class HelperDisplay(
         released = true
         keepActive?.interrupt(); keepActive = null
         runCatching { display?.release() }; display = null
+        virtualDevice?.close(); virtualDevice = null
         relay?.release(); relay = null
         encoder?.release(); encoder = null
         runCatching { surface?.release() }; surface = null
