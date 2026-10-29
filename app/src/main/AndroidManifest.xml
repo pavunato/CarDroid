@@ -82,6 +82,18 @@
             android:excludeFromRecents="true"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|density|uiMode" />
 
+        <!-- Car-screen keyboard bridge: bound only on the car session's Virtual Device; draws nothing itself. -->
+        <service
+            android:name=".car.keyboard.CarInputMethodService"
+            android:label="CarDroid car keyboard"
+            android:permission="android.permission.BIND_INPUT_METHOD"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.view.InputMethod" />
+            </intent-filter>
+            <meta-data android:name="android.view.im" android:resource="@xml/car_input_method" />
+        </service>
+
         <!-- Auto-start Bluetooth listening after reboot and after each app update. -->
         <receiver
             android:name=".AutoStartReceiver"

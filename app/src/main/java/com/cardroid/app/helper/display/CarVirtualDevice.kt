@@ -1,6 +1,7 @@
 package com.cardroid.app.helper.display
 
 import android.annotation.SuppressLint
+import android.content.ComponentName
 import android.content.Context
 import android.hardware.display.VirtualDisplay
 import android.hardware.display.VirtualDisplayConfig
@@ -36,6 +37,7 @@ class CarVirtualDevice private constructor(private val device: Any, private val 
         private const val PACKAGE = FakeContext.PACKAGE_NAME
         private const val PROFILE = "android.app.role.COMPANION_DEVICE_APP_STREAMING"
         private const val LOCK_STATE_ALWAYS_UNLOCKED = 1
+        private val CAR_KEYBOARD = ComponentName("com.cardroid.app", "com.cardroid.app.car.keyboard.CarInputMethodService")
 
         /** Null when unsupported or refused; the caller falls back to a plain virtual display. */
         fun open(log: (String) -> Unit): CarVirtualDevice? {
@@ -54,6 +56,9 @@ class CarVirtualDevice private constructor(private val device: Any, private val 
                 val builder = builderCls.getConstructor().newInstance()
                 builderCls.getMethod("setLockState", Int::class.javaPrimitiveType).invoke(builder, LOCK_STATE_ALWAYS_UNLOCKED)
                 runCatching { builderCls.getMethod("setName", String::class.java).invoke(builder, "CarDroid") }
+                // API 35+: car panels type through CarDroid's car keyboard; the phone keeps its own IME.
+                runCatching { builderCls.getMethod("setInputMethodComponent", ComponentName::class.java).invoke(builder, CAR_KEYBOARD) }
+                    .onFailure { log("Car keyboard unavailable on this Android (${it.javaClass.simpleName})") }
                 val params = builderCls.getMethod("build").invoke(builder)
                 val device = managerCls.getMethod("createVirtualDevice", Int::class.javaPrimitiveType, Class.forName("android.companion.virtual.VirtualDeviceParams"))
                     .invoke(manager, association, params) ?: error("createVirtualDevice returned null")

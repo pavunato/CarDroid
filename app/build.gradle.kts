@@ -14,7 +14,7 @@ if (file("google-services.json").exists()) {
 
 android {
     namespace = "com.cardroid.app"
-    compileSdk = 34
+    compileSdk = 35
 
     defaultConfig {
         applicationId = "com.cardroid.app"
