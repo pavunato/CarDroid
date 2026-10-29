@@ -24,6 +24,7 @@ internal fun ConnectionDiagnosticsCard(onDiscoverable: () -> Unit, onStop: () ->
     LaunchedEffect(Unit) { while (true) { now = android.os.SystemClock.elapsedRealtime(); kotlinx.coroutines.delay(1000) } }
     val context = LocalContext.current
     var expanded by rememberSaveable { mutableStateOf(false) }
+    var confirmSend by remember { mutableStateOf(false) }
     val version = remember(context) { context.packageManager.getPackageInfo(context.packageName, 0).versionName }
     fun report() = "CarDroid $version; Android ${android.os.Build.VERSION.SDK_INT}\n" + CarDroidLog.classicDiscovery.report() + diagnostics.report()
     Surface(shape = MaterialTheme.shapes.large, color = MaterialTheme.colorScheme.surface) {
@@ -57,6 +58,20 @@ internal fun ConnectionDiagnosticsCard(onDiscoverable: () -> Unit, onStop: () ->
                         .onFailure { Toast.makeText(context, "No sharing app available; use Copy report", Toast.LENGTH_LONG).show() }
                 }) { Text("Share") }
             }
+            TextButton(onClick = { confirmSend = true }) { Text("Send to developer") }
+            if (confirmSend) AlertDialog(
+                onDismissRequest = { confirmSend = false },
+                title = { Text("Send report to developer?") },
+                text = { Text("Uploads this sanitized report (same as Copy report) to the developer through Firebase Crashlytics (Google). It never includes raw logs, network names, addresses or keys.") },
+                confirmButton = {
+                    TextButton(onClick = {
+                        confirmSend = false
+                        val id = sendReportToDeveloper(report())
+                        Toast.makeText(context, if (id != null) "Report $id queued; it uploads next time CarDroid starts. Mention $id on Telegram or GitHub." else "Sending is unavailable in this build; use Share instead", Toast.LENGTH_LONG).show()
+                    }) { Text("Send") }
+                },
+                dismissButton = { TextButton(onClick = { confirmSend = false }) { Text("Cancel") } },
+            )
             if (snapshot.running) Row {
                 TextButton(onClick = onRetry) { Text("Retry connection checks") }
                 TextButton(onClick = onStop) { Text("Stop checks") }
