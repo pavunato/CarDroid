@@ -4,6 +4,12 @@ plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
+    id("com.google.firebase.crashlytics")
+}
+
+// Firebase config comes from app/google-services.json; without it the app still builds but Crashlytics stays inert.
+if (file("google-services.json").exists()) {
+    apply(plugin = "com.google.gms.google-services")
 }
 
 android {
@@ -16,6 +22,7 @@ android {
         targetSdk = 34
         versionCode = 2
         versionName = "0.1.1"
+        manifestPlaceholders["crashlyticsEnabled"] = "true"
     }
 
     // Release signing comes from the gitignored keystore.properties; without it the release build is unsigned.
@@ -31,6 +38,10 @@ android {
     } else null
 
     buildTypes {
+        debug {
+            // Only release builds report crashes; dev and test runs stay off Crashlytics.
+            manifestPlaceholders["crashlyticsEnabled"] = "false"
+        }
         release {
             signingConfig = releaseSigning
             isMinifyEnabled = false
@@ -65,6 +76,8 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     implementation("dev.rikka.shizuku:api:13.1.5")
     implementation("dev.rikka.shizuku:provider:13.1.5")
+    implementation(platform("com.google.firebase:firebase-bom:33.5.1"))
+    implementation("com.google.firebase:firebase-crashlytics")
     testImplementation("junit:junit:4.13.2")
     // Android provides org.json at runtime; JVM release-parser tests need a real implementation.
     testImplementation("org.json:json:20240303")

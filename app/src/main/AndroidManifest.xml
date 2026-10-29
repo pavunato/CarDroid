@@ -51,6 +51,11 @@
         android:theme="@android:style/Theme.Material.Light.NoActionBar"
         android:usesCleartextTraffic="true">
 
+        <!-- Crash reports only: no custom keys, logs or analytics are sent (debug builds disable it). -->
+        <meta-data
+            android:name="firebase_crashlytics_collection_enabled"
+            android:value="${crashlyticsEnabled}" />
+
         <activity android:name=".update.UpdateActivity" android:exported="false" />
 
         <activity
