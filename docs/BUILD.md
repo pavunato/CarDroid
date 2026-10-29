@@ -49,6 +49,12 @@ The app needs these runtime permissions, granted via the in-app
 - `NEARBY_WIFI_DEVICES` (API 33+, for the hotspot)
 - `POST_NOTIFICATIONS` (foreground service notification)
 
+On Android 14+, the first car session makes the helper create a companion association for `com.android.shell` (MAC `02:ca:4d:00:00:01`). It lets car apps keep running while the phone is locked (see [architecture](ARCHITECTURE.md)). To remove it:
+
+```bash
+adb shell cmd companiondevice disassociate 0 com.android.shell 02:ca:4d:00:00:01
+```
+
 ## Build flavors
 
 Only the debug variant is wired today. To produce a release APK:
