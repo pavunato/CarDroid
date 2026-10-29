@@ -78,6 +78,7 @@ object HelperMain {
         if (args.contains("--self-test-audio")) { HelperAudioCapture.selfTest(::log); return }
         if (appUid < 0) { log("missing or invalid --app-uid, exiting"); exitProcess(2) }
         appUidForPanels = appUid
+        panelHost = PanelHost(appUid, ::log) { name, w, h, dpi, surface -> synchronized(lock) { display }?.createPanel(name, w, h, dpi, surface) }
         // ActivityThread/system context must be built on the looper thread; failures only disable displays (reported on START_DISPLAY).
         runCatching { com.cardroid.app.helper.display.FakeContext.get(::log) }.onFailure { log("display bootstrap failed: ${it.javaClass.simpleName}: ${it.message}") }
         val server = try { ServerSocket(port, 4, InetAddress.getByName("127.0.0.1")) } catch (e: Exception) {
@@ -127,6 +128,7 @@ object HelperMain {
                     }
                     controlWrite(HelperProtocol.T_HELLO_ACK, HelperProtocol.helloAck(Process.myPid(), Build.VERSION.SDK_INT))
                     log("client connected uid=$uid apkVersion=${hello.apkVersionCode} role=CONTROL")
+                    panelHost?.let { host -> Thread({ host.attachToApp() }, "helper-panel-attach").apply { isDaemon = true }.start() }
                     controlLoop(input)
                 }
                 HelperProtocol.ROLE_AUDIO -> {
@@ -224,12 +226,14 @@ object HelperMain {
         val process = ProcessBuilder("/system/bin/dumpsys", "-t", "2", "display").redirectErrorStream(true).start()
         val dump = try { process.inputStream.bufferedReader().use { it.readText() } }
             finally { process.destroy() }
-        val owned = PanelDisplayInfo.ownedPanels(dump, appUidForPanels)
+        // App-owned panels (fallback) plus the helper's own virtual-device panels.
+        val owned = PanelDisplayInfo.ownedPanels(dump, appUidForPanels) + (panelHost?.packages() ?: emptyMap())
         panelPackages.clear()
         panelPackages.putAll(owned)
         panelInjectors.keys.retainAll(owned.keys)
     }
     private var appUidForPanels = -1
+    private var panelHost: PanelHost? = null
     private fun handlePanel(type: Int, payload: ByteArray) {
         try {
             val (id, body) = HelperProtocol.parsePanelCommand(payload)
@@ -381,6 +385,7 @@ object HelperMain {
         val (d, sk) = synchronized(lock) { val pair = display to sink; display = null; sink = null; pair }
         if (d == null) return
         runCatching { injector.releaseAll(d.displayId) } // lift active pointers before the display disappears
+        panelHost?.releaseAll("display stopped") // panels live on the display's virtual device
         runCatching { d.release() }; sk?.close()
         log("display stopped reason=$reason")
         if (notify) controlWrite(HelperProtocol.T_DISPLAY_STOPPED, HelperProtocol.displayStopped(reason))

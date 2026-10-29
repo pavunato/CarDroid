@@ -21,7 +21,7 @@ class HelperDisplay(
 ) {
     private var encoder: DisplayEncoder? = null
     private var display: VirtualDisplay? = null
-    private var virtualDevice: CarVirtualDevice? = null
+    @Volatile private var virtualDevice: CarVirtualDevice? = null
     private var surface: Surface? = null
     private var relay: FrameRelay? = null
     private var keepActive: Thread? = null
@@ -60,6 +60,10 @@ class HelperDisplay(
     }
 
     fun requestKeyFrame() { encoder?.requestKeyFrame() }
+
+    /** App panel display on this session's virtual device; null without one (the app then keeps its own panel display). */
+    fun createPanel(name: String, width: Int, height: Int, dpi: Int, target: Surface): VirtualDisplay? =
+        virtualDevice?.takeIf { !released }?.createDisplay(name, width, height, dpi, target, PANEL_FLAGS)
 
     /** Keeps the car display awake and unlocked while the phone sleeps; null means use the plain virtual display. */
     private fun createOnVirtualDevice(target: Surface): VirtualDisplay? {
@@ -162,5 +166,9 @@ class HelperDisplay(
         private const val TOUCH_FEEDBACK_DISABLED = 1 shl 13
         private const val OWN_FOCUS = 1 shl 14
         private const val DEVICE_DISPLAY_GROUP = 1 shl 15
+        private const val DESTROY_CONTENT_ON_REMOVAL = 1 shl 8
+        /** Same private cell as the app-owned panels, plus own focus so panel input never steals the phone's focus. */
+        private const val PANEL_FLAGS = OWN_CONTENT_ONLY or SUPPORTS_TOUCH or DESTROY_CONTENT_ON_REMOVAL or TRUSTED or
+            TOUCH_FEEDBACK_DISABLED or OWN_FOCUS
     }
 }

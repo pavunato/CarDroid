@@ -25,6 +25,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.cardroid.app.CarDroidLog
+import com.cardroid.app.helper.HelperBridge
 import com.cardroid.app.helper.HelperProtocol
 import kotlinx.coroutines.*
 
@@ -105,16 +106,21 @@ internal fun NativeAppPanel(app: CarApp?, modifier: Modifier, visible: Boolean,
     }
 }
 
-/** App-owned, untrusted displays: avoids interfering with the phone's keyguard/IME focus. */
+/**
+ * Prefers a helper-owned display on the car session's virtual device (keeps running while the phone is locked); falls back
+ * to an app-owned, untrusted display, which avoids interfering with the phone's keyguard/IME focus but sleeps with the phone.
+ */
 private class NativePanelView(context: Context, private val app: CarApp,
     private val onDisplayChanged: (Int) -> Unit,
     private val reportError: (String?) -> Unit) : TextureView(context), TextureView.SurfaceTextureListener {
     private var virtualDisplay: android.hardware.display.VirtualDisplay? = null
+    private var helperPanelId = -1
+    private val panelDisplayId: Int? get() = helperPanelId.takeIf { it > 0 } ?: virtualDisplay?.display?.displayId
     private var output: Surface? = null
     private var appLaunched = false
     var inputEnabled = false
         set(value) {
-            if (field && !value) virtualDisplay?.display?.displayId?.let { CarDisplayState.panelTouch(it, emptyList()) }
+            if (field && !value) panelDisplayId?.let { CarDisplayState.panelTouch(it, emptyList()) }
             field = value
         }
     init { surfaceTextureListener = this; isOpaque = true }
@@ -122,6 +128,12 @@ private class NativePanelView(context: Context, private val app: CarApp,
         try {
             texture.setDefaultBufferSize(width, height)
             output = Surface(texture)
+            HelperBridge.createPanel(output!!, width, height, 160, app.packageName)?.let { id ->
+                helperPanelId = id
+                onDisplayChanged(id)
+                launchApp()
+                return
+            }
             val manager = context.getSystemService(android.hardware.display.DisplayManager::class.java)
             // Private cells are excluded from SystemUI secondary-display keyguard presentations.
             // The shell helper launches the user-selected app and routes input on the owner's behalf.
@@ -134,20 +146,21 @@ private class NativePanelView(context: Context, private val app: CarApp,
     }
     fun launchApp() {
         if (appLaunched) return
-        val id = virtualDisplay?.display?.displayId ?: return
+        val id = panelDisplayId ?: return
         if (CarDisplayState.panelLaunch(id, app.target)) { appLaunched = true; reportError(null) }
         else reportError("Start the display helper, then reselect the app.")
     }
     fun helperDisconnected() { appLaunched = false; inputEnabled = false }
     override fun onSurfaceTextureSizeChanged(texture: SurfaceTexture, width: Int, height: Int) {
         if (width > 0 && height > 0) runCatching {
-            texture.setDefaultBufferSize(width, height); virtualDisplay?.resize(width, height, 160)
+            texture.setDefaultBufferSize(width, height)
+            if (helperPanelId > 0) HelperBridge.resizePanel(helperPanelId, width, height, 160) else virtualDisplay?.resize(width, height, 160)
         }.onFailure(::fail)
     }
     override fun onSurfaceTextureDestroyed(texture: SurfaceTexture): Boolean { releasePanel(); return true }
     override fun onSurfaceTextureUpdated(texture: SurfaceTexture) {}
     override fun onTouchEvent(event: MotionEvent): Boolean {
-        val id = virtualDisplay?.display?.displayId ?: return true
+        val id = panelDisplayId ?: return true
         if (!inputEnabled) return true
         val contacts = if (event.actionMasked == MotionEvent.ACTION_CANCEL || event.actionMasked == MotionEvent.ACTION_UP) emptyList()
         else (0 until event.pointerCount.coerceAtMost(HelperProtocol.MAX_CONTACTS)).filter {
@@ -163,7 +176,9 @@ private class NativePanelView(context: Context, private val app: CarApp,
     fun releasePanel() {
         appLaunched = false
         onDisplayChanged(-1)
-        virtualDisplay?.display?.displayId?.let { CarDisplayState.panelTouch(it, emptyList()) }
+        panelDisplayId?.let { CarDisplayState.panelTouch(it, emptyList()) }
+        if (helperPanelId > 0) HelperBridge.releasePanel(helperPanelId)
+        helperPanelId = -1
         runCatching { virtualDisplay?.release() }; virtualDisplay = null
         output?.release(); output = null
     }
