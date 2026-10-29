@@ -83,7 +83,9 @@ class HelperDisplay(
         // presentations off this canvas (some ROMs otherwise move shade focus off the phone).
         var f = OWN_CONTENT_ONLY or SUPPORTS_TOUCH or ROTATES_WITH_CONTENT
         if (Build.VERSION.SDK_INT >= 33) f = f or TRUSTED or OWN_DISPLAY_GROUP or ALWAYS_UNLOCKED or TOUCH_FEEDBACK_DISABLED
-        if (Build.VERSION.SDK_INT >= 34) f = f or OWN_FOCUS or DEVICE_DISPLAY_GROUP
+        // Touches on panels arrive through the launcher on this display first; taking top focus here
+        // would blur the panel app (e.g. Chrome closes its omnibox suggestions before the tap reaches them).
+        if (Build.VERSION.SDK_INT >= 34) f = f or OWN_FOCUS or DEVICE_DISPLAY_GROUP or STEAL_TOP_FOCUS_DISABLED
         return f
     }
 
@@ -166,6 +168,7 @@ class HelperDisplay(
         private const val TOUCH_FEEDBACK_DISABLED = 1 shl 13
         private const val OWN_FOCUS = 1 shl 14
         private const val DEVICE_DISPLAY_GROUP = 1 shl 15
+        private const val STEAL_TOP_FOCUS_DISABLED = 1 shl 16
         private const val DESTROY_CONTENT_ON_REMOVAL = 1 shl 8
         /** Same private cell as the app-owned panels, plus own focus so panel input never steals the phone's focus. */
         private const val PANEL_FLAGS = OWN_CONTENT_ONLY or SUPPORTS_TOUCH or DESTROY_CONTENT_ON_REMOVAL or TRUSTED or
