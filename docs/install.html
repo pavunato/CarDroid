@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en" data-lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Install CarDroid</title>
+  <meta name="title-en" content="Install CarDroid">
+  <meta name="title-vi" content="Cài đặt CarDroid">
+  <meta name="description" content="Step-by-step guide: developer options, Shizuku, CarDroid setup and connecting your car.">
+  <link rel="icon" href="brand/cardroid-icon.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="assets/site.css">
+  <script src="assets/site.js"></script>
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="./"><img src="brand/cardroid-icon.svg" alt="">CarDroid</a>
+    <nav class="nav">
+      <a href="./"><span lang="en">Features</span><span lang="vi">Tính năng</span></a>
+      <a href="why.html"><span lang="en">Why CarDroid</span><span lang="vi">Vì sao có CarDroid</span></a>
+      <a href="install.html" aria-current="page"><span lang="en">Install guide</span><span lang="vi">Hướng dẫn cài đặt</span></a>
+    </nav>
+    <div class="lang" role="group" aria-label="Language">
+      <button data-set="en" aria-pressed="true">EN</button>
+      <button data-set="vi" aria-pressed="false">VI</button>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+  <div class="hero">
+    <p class="eyebrow"><span lang="en">About 10 minutes, once</span><span lang="vi">Khoảng 10 phút, chỉ một lần</span></p>
+    <h1><span lang="en">Install CarDroid</span><span lang="vi">Cài đặt CarDroid</span></h1>
+    <p class="lead">
+      <span lang="en">You'll turn on Developer options, start Shizuku, install CarDroid and pair it with your car. No computer and no root needed.</span>
+      <span lang="vi">Bạn sẽ bật Tuỳ chọn nhà phát triển, khởi động Shizuku, cài CarDroid và ghép nối với xe. Không cần máy tính, không cần root.</span>
+    </p>
+  </div>
+
+  <h2><span lang="en">What you need</span><span lang="vi">Bạn cần chuẩn bị</span></h2>
+  <div class="req">
+    <div><strong><span lang="en">Android 11 or newer</span><span lang="vi">Android 11 trở lên</span></strong><span lang="en">Android 14+ keeps apps running with the phone locked; Android 15+ adds the car keyboard.</span><span lang="vi">Android 14+ giữ ứng dụng chạy khi khoá máy; Android 15+ có thêm bàn phím trên xe.</span></div>
+    <div><strong><span lang="en">A car with wireless CarPlay</span><span lang="vi">Xe có CarPlay không dây</span></strong><span lang="en">Factory screen or an aftermarket head unit.</span><span lang="vi">Màn hình theo xe hoặc màn hình lắp thêm.</span></div>
+    <div><strong><span lang="en">Wi-Fi turned on</span><span lang="vi">Bật Wi-Fi</span></strong><span lang="en">Needed to start Shizuku, and for video to the car.</span><span lang="vi">Cần để khởi động Shizuku và truyền hình ảnh lên xe.</span></div>
+  </div>
+
+  <ul class="toc">
+    <li><a href="#apk"><span lang="en">1 · Install the APK</span><span lang="vi">1 · Cài APK</span></a></li>
+    <li><a href="#dev"><span lang="en">2 · Developer options</span><span lang="vi">2 · Tuỳ chọn nhà phát triển</span></a></li>
+    <li><a href="#wireless"><span lang="en">3 · Wireless debugging</span><span lang="vi">3 · Gỡ lỗi không dây</span></a></li>
+    <li><a href="#shizuku"><span lang="en">4 · Shizuku</span><span lang="vi">4 · Shizuku</span></a></li>
+    <li><a href="#setup"><span lang="en">5 · CarDroid setup</span><span lang="vi">5 · Thiết lập CarDroid</span></a></li>
+    <li><a href="#car"><span lang="en">6 · Connect your car</span><span lang="vi">6 · Kết nối xe</span></a></li>
+  </ul>
+
+  <ol class="steps" style="margin-top:24px">
+    <li class="step" id="apk">
+      <h3><span lang="en">Download and install CarDroid</span><span lang="vi">Tải và cài CarDroid</span></h3>
+      <ol lang="en">
+        <li>On your phone, open the <a href="https://github.com/pavunato/CarDroid/releases/latest">latest release</a> and download <code>CarDroid-…apk</code>.</li>
+        <li>Open the downloaded file. If Android asks, allow your browser or file manager to <span class="path">Install unknown apps</span>, then tap <span class="path">Install</span>.</li>
+      </ol>
+      <ol lang="vi">
+        <li>Trên điện thoại, mở <a href="https://github.com/pavunato/CarDroid/releases/latest">bản phát hành mới nhất</a> và tải tệp <code>CarDroid-…apk</code>.</li>
+        <li>Mở tệp vừa tải. Nếu Android hỏi, cho phép trình duyệt hoặc trình quản lý tệp <span class="path">Cài đặt ứng dụng không rõ nguồn gốc</span>, rồi chạm <span class="path">Cài đặt</span>.</li>
+      </ol>
+    </li>
+
+    <li class="step" id="dev">
+      <h3><span lang="en">Turn on Developer options</span><span lang="vi">Bật Tuỳ chọn nhà phát triển</span></h3>
+      <ol lang="en">
+        <li>Open <span class="path">Settings → About phone</span>.</li>
+        <li>Tap <span class="path">Build number</span> quickly, again and again, about <strong>7 to 10 times</strong>, until you see <em>"You are now a developer!"</em>. Enter your screen lock PIN if asked.</li>
+      </ol>
+      <ol lang="vi">
+        <li>Mở <span class="path">Cài đặt → Giới thiệu về điện thoại</span>.</li>
+        <li>Chạm liên tục vào <span class="path">Số hiệu bản dựng</span> khoảng <strong>7 đến 10 lần</strong> cho đến khi thấy thông báo <em>"Bạn đã là nhà phát triển!"</em>. Nhập mã PIN khoá màn hình nếu được hỏi.</li>
+      </ol>
+      <div class="note">
+        <span lang="en"><strong>Where is it on my phone?</strong> Xiaomi / Redmi / POCO: <span class="path">Settings → About phone</span>, tap <span class="path">OS version</span> (or <span class="path">MIUI version</span>). Samsung: <span class="path">Settings → About phone → Software information → Build number</span>. Oppo / Realme / OnePlus: <span class="path">Settings → About device → Version → Build number</span>.</span>
+        <span lang="vi"><strong>Trên máy tôi nằm ở đâu?</strong> Xiaomi / Redmi / POCO: <span class="path">Cài đặt → Giới thiệu điện thoại</span>, chạm vào <span class="path">Phiên bản OS</span> (hoặc <span class="path">Phiên bản MIUI</span>). Samsung: <span class="path">Cài đặt → Thông tin điện thoại → Thông tin phần mềm → Số hiệu bản tạo</span>. Oppo / Realme / OnePlus: <span class="path">Cài đặt → Giới thiệu thiết bị → Phiên bản → Số hiệu bản dựng</span>.</span>
+      </div>
+    </li>
+
+    <li class="step" id="wireless">
+      <h3><span lang="en">Turn on Wireless debugging</span><span lang="vi">Bật Gỡ lỗi không dây</span></h3>
+      <ol lang="en">
+        <li>Connect the phone to Wi-Fi (your home Wi-Fi is fine for this step).</li>
+        <li>Open <span class="path">Settings → System → Developer options</span> (on Xiaomi: <span class="path">Settings → Additional settings → Developer options</span>).</li>
+        <li>Turn on <span class="path">Wireless debugging</span> and confirm <span class="path">Allow</span>.</li>
+      </ol>
+      <ol lang="vi">
+        <li>Kết nối điện thoại với Wi-Fi (Wi-Fi ở nhà là được).</li>
+        <li>Mở <span class="path">Cài đặt → Hệ thống → Tuỳ chọn nhà phát triển</span> (trên Xiaomi: <span class="path">Cài đặt → Cài đặt bổ sung → Tuỳ chọn nhà phát triển</span>).</li>
+        <li>Bật <span class="path">Gỡ lỗi không dây</span> và chọn <span class="path">Cho phép</span>.</li>
+      </ol>
+      <div class="note">
+        <span lang="en"><strong>Xiaomi, Redmi, POCO:</strong> in Developer options also turn on <span class="path">USB debugging</span> and <span class="path">USB debugging (Security settings)</span>. Without the second one, the car touchscreen can't control the apps. Xiaomi may ask you to sign in to a Mi account and insert a SIM to enable it.</span>
+        <span lang="vi"><strong>Xiaomi, Redmi, POCO:</strong> trong Tuỳ chọn nhà phát triển, bật thêm <span class="path">Gỡ lỗi USB</span> và <span class="path">Gỡ lỗi USB (Cài đặt bảo mật)</span>. Thiếu mục thứ hai, màn hình cảm ứng của xe sẽ không điều khiển được ứng dụng. Xiaomi có thể yêu cầu đăng nhập tài khoản Mi và lắp SIM để bật mục này.</span>
+      </div>
+    </li>
+
+    <li class="step" id="shizuku">
+      <h3><span lang="en">Install and start Shizuku</span><span lang="vi">Cài và khởi động Shizuku</span></h3>
+      <p lang="en">Shizuku is a free, open-source app that lets CarDroid start its display helper without root.</p>
+      <p lang="vi">Shizuku là ứng dụng miễn phí, mã nguồn mở, giúp CarDroid khởi động trình trợ giúp hiển thị mà không cần root.</p>
+      <ol lang="en">
+        <li>Install Shizuku from <a href="https://play.google.com/store/apps/details?id=moe.shizuku.privileged.api">Google Play</a> or <a href="https://github.com/RikkaApps/Shizuku/releases">GitHub</a>.</li>
+        <li>Open Shizuku and, under <span class="path">Start via Wireless debugging</span>, tap <span class="path">Pairing</span>. Allow its notification.</li>
+        <li>Go back to <span class="path">Developer options → Wireless debugging</span> and tap <span class="path">Pair device with pairing code</span>. A 6-digit code appears.</li>
+        <li>Pull down the notification shade, tap <span class="path">Enter pairing code</span> on the Shizuku notification and type the code.</li>
+        <li>Return to Shizuku and tap <span class="path">Start</span>. It shows <em>"Shizuku is running"</em>.</li>
+      </ol>
+      <ol lang="vi">
+        <li>Cài Shizuku từ <a href="https://play.google.com/store/apps/details?id=moe.shizuku.privileged.api">Google Play</a> hoặc <a href="https://github.com/RikkaApps/Shizuku/releases">GitHub</a>.</li>
+        <li>Mở Shizuku, ở mục <span class="path">Khởi động qua Gỡ lỗi không dây</span>, chạm <span class="path">Ghép nối</span>. Cho phép Shizuku hiện thông báo.</li>
+        <li>Quay lại <span class="path">Tuỳ chọn nhà phát triển → Gỡ lỗi không dây</span> và chạm <span class="path">Ghép nối thiết bị bằng mã ghép nối</span>. Một mã 6 số sẽ hiện ra.</li>
+        <li>Kéo thanh thông báo xuống, chạm <span class="path">Nhập mã ghép nối</span> trên thông báo của Shizuku và gõ mã.</li>
+        <li>Quay lại Shizuku và chạm <span class="path">Khởi động</span>. Shizuku hiện <em>"Shizuku đang chạy"</em>.</li>
+      </ol>
+      <div class="note">
+        <span lang="en"><strong>After every phone restart</strong> Shizuku stops. Open Shizuku and tap <span class="path">Start</span> again (Wi-Fi must be on); you don't need to pair again. Have a computer? You can also start it with <code>adb shell sh /storage/emulated/0/Android/data/moe.shizuku.privileged.api/start.sh</code>.</span>
+        <span lang="vi"><strong>Mỗi lần khởi động lại điện thoại</strong>, Shizuku sẽ dừng. Mở Shizuku và chạm <span class="path">Khởi động</span> lại (cần bật Wi-Fi); không cần ghép nối lại. Có máy tính? Bạn cũng có thể khởi động bằng lệnh <code>adb shell sh /storage/emulated/0/Android/data/moe.shizuku.privileged.api/start.sh</code>.</span>
+      </div>
+    </li>
+
+    <li class="step" id="setup">
+      <h3><span lang="en">Finish the setup checklist in CarDroid</span><span lang="vi">Hoàn tất danh sách thiết lập trong CarDroid</span></h3>
+      <ol lang="en">
+        <li>Open CarDroid. The <span class="path">Setup checklist</span> shows what is missing.</li>
+        <li>Tap <span class="path">Allow permissions</span> and accept Bluetooth / Nearby devices, location and notifications.</li>
+        <li>Tap <span class="path">Turn on Bluetooth</span> if it is off.</li>
+        <li>Tap <span class="path">Set up Shizuku</span>, then <span class="path">Allow</span> in the Shizuku dialog.</li>
+        <li>Wait for <em>"Display helper ready"</em>. Every item in the checklist turns green.</li>
+      </ol>
+      <ol lang="vi">
+        <li>Mở CarDroid. <span class="path">Danh sách thiết lập</span> cho thấy những gì còn thiếu.</li>
+        <li>Chạm <span class="path">Cấp quyền</span> và đồng ý quyền Bluetooth / Thiết bị ở gần, vị trí và thông báo.</li>
+        <li>Chạm <span class="path">Bật Bluetooth</span> nếu Bluetooth đang tắt.</li>
+        <li>Chạm <span class="path">Thiết lập Shizuku</span>, rồi chọn <span class="path">Cho phép</span> trong hộp thoại của Shizuku.</li>
+        <li>Chờ đến khi thấy <em>"Display helper ready"</em> (trình trợ giúp hiển thị sẵn sàng). Mọi mục trong danh sách chuyển sang màu xanh.</li>
+      </ol>
+      <div class="note">
+        <span lang="en">The app is currently in English, so labels in CarDroid appear in English.</span>
+        <span lang="vi">Ứng dụng hiện chỉ có tiếng Anh, nên các nhãn trong CarDroid sẽ hiển thị bằng tiếng Anh như trên.</span>
+      </div>
+    </li>
+
+    <li class="step" id="car">
+      <h3><span lang="en">Connect your car</span><span lang="vi">Kết nối với xe</span></h3>
+      <ol lang="en">
+        <li>In the car, open the <strong>CarPlay</strong> screen and choose to add or connect a new phone (not the ordinary Bluetooth phone menu).</li>
+        <li>On the phone, open CarDroid, go to <span class="path">Car connection</span> and tap <span class="path">Make phone discoverable</span>, then confirm.</li>
+        <li>Pick your phone on the car screen and accept the Bluetooth pairing prompts on both sides.</li>
+        <li>After a few seconds the CarDroid launcher appears on the car screen. From now on CarDroid connects by itself when you get in.</li>
+      </ol>
+      <ol lang="vi">
+        <li>Trên xe, mở màn hình <strong>CarPlay</strong> và chọn thêm hoặc kết nối điện thoại mới (không phải menu điện thoại Bluetooth thông thường).</li>
+        <li>Trên điện thoại, mở CarDroid, vào <span class="path">Car connection</span> và chạm <span class="path">Make phone discoverable</span> (cho phép tìm thấy điện thoại), rồi xác nhận.</li>
+        <li>Chọn điện thoại của bạn trên màn hình xe và đồng ý yêu cầu ghép nối Bluetooth ở cả hai bên.</li>
+        <li>Vài giây sau, trình khởi chạy CarDroid hiện lên màn hình xe. Từ lần sau, CarDroid tự kết nối khi bạn lên xe.</li>
+      </ol>
+      <div class="note">
+        <span lang="en"><strong>Lock the phone the normal way.</strong> On Android 14 and newer, apps on the car screen keep running while the phone is locked.</span>
+        <span lang="vi"><strong>Cứ khoá điện thoại như bình thường.</strong> Từ Android 14 trở lên, ứng dụng trên màn hình xe vẫn tiếp tục chạy khi điện thoại đã khoá.</span>
+      </div>
+    </li>
+  </ol>
+
+  <section class="prose" style="padding-bottom:64px">
+    <h2><span lang="en">If something doesn't work</span><span lang="vi">Nếu có gì đó không chạy</span></h2>
+    <ul lang="en">
+      <li><strong>The car only sees an ordinary Bluetooth phone:</strong> open <span class="path">Car connection · live checks</span> in CarDroid to see which step the car reached, and start pairing from the car's CarPlay screen.</li>
+      <li><strong>"Waiting for Shizuku":</strong> open Shizuku and tap <span class="path">Start</span>. This is needed after every phone restart.</li>
+      <li><strong>Car touch doesn't work on Xiaomi:</strong> turn on <span class="path">USB debugging (Security settings)</span>, then restart Shizuku.</li>
+      <li><strong>Still stuck?</strong> In CarDroid tap <span class="path">Copy report</span> (it contains no personal data) and post it in the <a href="https://t.me/+nZx6IUk47ENjN2Nl">Telegram group</a> or a <a href="https://github.com/pavunato/CarDroid/issues">GitHub issue</a>, with your car model and phone model.</li>
+    </ul>
+    <ul lang="vi">
+      <li><strong>Xe chỉ thấy điện thoại Bluetooth thông thường:</strong> mở <span class="path">Car connection · live checks</span> trong CarDroid để xem xe đã đến bước nào, và bắt đầu ghép nối từ màn hình CarPlay của xe.</li>
+      <li><strong>Báo "Waiting for Shizuku":</strong> mở Shizuku và chạm <span class="path">Khởi động</span>. Việc này cần làm sau mỗi lần khởi động lại điện thoại.</li>
+      <li><strong>Cảm ứng trên xe không hoạt động với Xiaomi:</strong> bật <span class="path">Gỡ lỗi USB (Cài đặt bảo mật)</span>, rồi khởi động lại Shizuku.</li>
+      <li><strong>Vẫn chưa được?</strong> Trong CarDroid chạm <span class="path">Copy report</span> (không chứa dữ liệu cá nhân) và gửi vào <a href="https://t.me/+nZx6IUk47ENjN2Nl">nhóm Telegram</a> hoặc tạo <a href="https://github.com/pavunato/CarDroid/issues">issue trên GitHub</a>, kèm dòng xe và mẫu điện thoại.</li>
+    </ul>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span><span lang="en">Made by</span><span lang="vi">Phát triển bởi</span> <a href="https://github.com/pavunato">pavunato</a> · <a href="https://github.com/pavunato/CarDroid">GitHub</a> · <a href="https://t.me/+nZx6IUk47ENjN2Nl">Telegram</a></span>
+    <span><span lang="en">CarPlay, iAP2 and MFi are Apple trademarks. CarDroid is independent and not affiliated with Apple.</span><span lang="vi">CarPlay, iAP2 và MFi là thương hiệu của Apple. CarDroid là dự án độc lập, không liên kết với Apple.</span></span>
+  </div>
+</footer>
+</body>
+</html>
