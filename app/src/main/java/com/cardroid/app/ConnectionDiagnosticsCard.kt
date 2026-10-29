@@ -66,8 +66,8 @@ internal fun ConnectionDiagnosticsCard(onDiscoverable: () -> Unit, onStop: () ->
                 confirmButton = {
                     TextButton(onClick = {
                         confirmSend = false
-                        val id = sendReportToDeveloper(report())
-                        Toast.makeText(context, if (id != null) "Report $id queued; it uploads next time CarDroid starts. Mention $id on Telegram or GitHub." else "Sending is unavailable in this build; use Share instead", Toast.LENGTH_LONG).show()
+                        val id = sendReportToDeveloper(context, report())
+                        Toast.makeText(context, if (id != null) "Report $id sent. Mention $id on Telegram or GitHub." else "Sending is unavailable in this build; use Share instead", Toast.LENGTH_LONG).show()
                     }) { Text("Send") }
                 },
                 dismissButton = { TextButton(onClick = { confirmSend = false }) { Text("Cancel") } },

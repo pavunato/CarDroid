@@ -56,6 +56,9 @@
             android:name="firebase_crashlytics_collection_enabled"
             android:value="${crashlyticsEnabled}" />
 
+        <!-- Throwaway process so a user-sent report uploads now instead of when the main process next restarts. -->
+        <service android:name=".DeveloperReportService" android:process=":devreport" android:exported="false" />
+
         <activity android:name=".update.UpdateActivity" android:exported="false" />
 
         <activity
