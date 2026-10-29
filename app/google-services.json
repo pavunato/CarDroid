@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "1002531994633",
+    "project_id": "cardroid-53351",
+    "storage_bucket": "cardroid-53351.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1002531994633:android:e69fea92ef96e604bf8cd8",
+        "android_client_info": {
+          "package_name": "com.cardroid.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAF9iAFCNob3BZpLOYhGHaZP1VTLkND-7k"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

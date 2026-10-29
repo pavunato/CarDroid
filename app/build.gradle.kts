@@ -78,6 +78,8 @@ dependencies {
     implementation("dev.rikka.shizuku:provider:13.1.5")
     implementation(platform("com.google.firebase:firebase-bom:33.5.1"))
     implementation("com.google.firebase:firebase-crashlytics")
+    // Firebase drags in fragment 1.1.0 via play-services-basement, which breaks ActivityResult APIs (lint error).
+    implementation("androidx.fragment:fragment:1.8.4")
     testImplementation("junit:junit:4.13.2")
     // Android provides org.json at runtime; JVM release-parser tests need a real implementation.
     testImplementation("org.json:json:20240303")
