@@ -1,5 +1,8 @@
 package com.cardroid.app.car.keyboard
 
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
 import android.view.KeyEvent
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
@@ -13,21 +16,23 @@ import kotlinx.coroutines.flow.asStateFlow
  * there) and the keyboard the car launcher draws on the car screen. Keys go straight into the editor's InputConnection.
  */
 object CarKeyboard {
-    /** The focused editor; a new [generation] per focus so the launcher can re-show a keyboard the user hid. */
-    data class Editor(val action: EnterAction, val generation: Long)
+    /** The focused editor and whether the car keyboard is up for it. */
+    data class Editor(val action: EnterAction, val visible: Boolean = true)
 
-    private const val OWN_EDIT_ECHO_MS = 500L
+    /** How long after a panel tap the editor has to report a click before the keyboard hides. */
+    private const val EDITOR_CLICK_WINDOW_MS = 400L
     private val current = MutableStateFlow<Editor?>(null)
     val editor: StateFlow<Editor?> = current.asStateFlow()
     @Volatile private var connection: InputConnection? = null
     @Volatile private var owner: Any? = null
-    private var generation = 0L
+    @Volatile private var lastEditorClickMs = 0L
+    private val main = Handler(Looper.getMainLooper())
 
     internal fun attach(service: Any, ic: InputConnection?, info: EditorInfo) {
         if (ic == null || info.inputType == EditorInfo.TYPE_NULL) { detach(service); return }
         owner = service; connection = ic
         val action = EnterAction.of(info.imeOptions, info.inputType)
-        current.value = Editor(action, ++generation)
+        current.value = Editor(action)
         CarDroidLog.log("CarKeyboard: editor ${info.packageName} action=${action.label}")
     }
 
@@ -36,28 +41,34 @@ object CarKeyboard {
         connection = null; current.value = null
     }
 
-    @Volatile private var lastOwnEditMs = 0L
-
-    /**
-     * The user tapped the focused editor (or moved its cursor): show the keyboard again if they had hidden it. Selection
-     * changes right after our own keys are ignored. A focused field's tap never restarts input, so this is the only signal.
-     */
-    internal fun editorTouched(service: Any, selectionChange: Boolean) {
+    /** The user tapped the focused editor: bring a hidden keyboard back (a focused field's tap never restarts input). */
+    internal fun editorClicked(service: Any) {
         if (owner !== service) return
-        if (selectionChange && System.currentTimeMillis() - lastOwnEditMs < OWN_EDIT_ECHO_MS) return
-        current.value?.let { current.value = it.copy(generation = ++generation) }
+        lastEditorClickMs = SystemClock.uptimeMillis()
+        current.value?.let { if (!it.visible) current.value = it.copy(visible = true) }
     }
 
-    fun type(text: String) { lastOwnEditMs = System.currentTimeMillis(); connection?.commitText(text, 1) }
+    fun hide() { current.value?.let { if (it.visible) current.value = it.copy(visible = false) } }
+
+    /**
+     * A tap landed in a car panel. Apps hide the keyboard themselves when the user picks a suggestion or leaves the field,
+     * but that request cannot reach us on car displays, so hide unless the tap turns out to be on the editor. Only while
+     * the keyboard is up.
+     */
+    fun panelTapped() {
+        if (current.value?.visible != true) return
+        val tapAt = SystemClock.uptimeMillis()
+        main.postDelayed({ if (KeyboardRules.hideAfterPanelTap(tapAt, lastEditorClickMs)) hide() }, EDITOR_CLICK_WINDOW_MS)
+    }
+
+    fun type(text: String) { connection?.commitText(text, 1) }
 
     fun backspace() {
-        lastOwnEditMs = System.currentTimeMillis()
         val ic = connection ?: return
         if (!ic.getSelectedText(0).isNullOrEmpty()) ic.commitText("", 1) else ic.deleteSurroundingTextInCodePoints(1, 0)
     }
 
     fun enter() {
-        lastOwnEditMs = System.currentTimeMillis()
         val ic = connection ?: return
         val action = current.value?.action ?: EnterAction.ENTER
         when {
@@ -69,6 +80,15 @@ object CarKeyboard {
             }
         }
     }
+}
+
+internal object KeyboardRules {
+    /**
+     * Hide after a panel tap unless the editor reported a click at or after it. Input restarts don't count: Maps restarts
+     * input when a picked suggestion opens its results. Only taps while the keyboard is up get here, so a tap on a fake
+     * search box that opens a fresh field still shows the keyboard.
+     */
+    fun hideAfterPanelTap(tapAtMs: Long, lastEditorClickMs: Long): Boolean = lastEditorClickMs < tapAtMs
 }
 
 /** What the car keyboard's Enter key does for the focused editor (its imeOptions action, else newline or Enter). */

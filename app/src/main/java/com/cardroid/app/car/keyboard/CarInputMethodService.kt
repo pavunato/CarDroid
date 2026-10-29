@@ -24,12 +24,7 @@ class CarInputMethodService : InputMethodService() {
         super.onDestroy()
     }
 
-    override fun onViewClicked(focusChanged: Boolean) { CarKeyboard.editorTouched(this, selectionChange = false) }
-
-    override fun onUpdateSelection(oldSelStart: Int, oldSelEnd: Int, newSelStart: Int, newSelEnd: Int, candidatesStart: Int, candidatesEnd: Int) {
-        super.onUpdateSelection(oldSelStart, oldSelEnd, newSelStart, newSelEnd, candidatesStart, candidatesEnd)
-        CarKeyboard.editorTouched(this, selectionChange = true)
-    }
+    override fun onViewClicked(focusChanged: Boolean) { CarKeyboard.editorClicked(this) }
 
     override fun onEvaluateFullscreenMode() = false
 }

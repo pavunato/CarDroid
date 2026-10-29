@@ -25,6 +25,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.cardroid.app.CarDroidLog
+import com.cardroid.app.car.keyboard.CarKeyboard
 import com.cardroid.app.helper.HelperBridge
 import com.cardroid.app.helper.HelperProtocol
 import kotlinx.coroutines.*
@@ -169,9 +170,23 @@ private class NativePanelView(context: Context, private val app: CarApp,
             event.getX(i).toInt().coerceIn(0, (width - 1).coerceAtLeast(0)),
             event.getY(i).toInt().coerceIn(0, (height - 1).coerceAtLeast(0))) }
         CarDisplayState.panelTouch(id, contacts)
+        trackTap(event)
         if (event.actionMasked == MotionEvent.ACTION_DOWN) parent?.requestDisallowInterceptTouchEvent(true)
         if (event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL) parent?.requestDisallowInterceptTouchEvent(false)
         return true
+    }
+    private var tapDown: MotionEvent? = null
+    /** A short, still touch is a tap: the car keyboard hides unless it landed on the focused editor. */
+    private fun trackTap(event: MotionEvent) {
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> { tapDown?.recycle(); tapDown = MotionEvent.obtain(event) }
+            MotionEvent.ACTION_UP -> tapDown?.let { down ->
+                val slop = android.view.ViewConfiguration.get(context).scaledTouchSlop
+                if (event.eventTime - down.eventTime < android.view.ViewConfiguration.getLongPressTimeout() &&
+                    kotlin.math.hypot(event.x - down.x, event.y - down.y) <= slop) CarKeyboard.panelTapped()
+            }
+            MotionEvent.ACTION_CANCEL, MotionEvent.ACTION_POINTER_DOWN -> { tapDown?.recycle(); tapDown = null }
+        }
     }
     fun releasePanel() {
         appLaunched = false

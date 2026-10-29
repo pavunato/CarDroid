@@ -210,13 +210,12 @@ fun CarLauncherScreen(apps: List<CarApp>, prefs: CarLauncherPrefs, homeSignal: I
             androidx.compose.animation.AnimatedVisibility(overlay == Overlay.Hidden, enter = fadeIn(tween(160)) + scaleIn(tween(180), 0.97f), exit = fadeOut(tween(120))) {
                 HiddenPanel(hiddenApps, onUnhide = { prefs.unhide(it.target) })
             }
-            // Car keyboard for the focused panel editor; hidden until the next field focus after the user dismisses it.
+            // Car keyboard for the focused panel editor (hidden by its hide key, a submit action or a tap elsewhere in the panel).
             val editor by CarKeyboard.editor.collectAsState()
-            var dismissed by remember { mutableLongStateOf(-1L) }
-            val showKeyboard = editor != null && editor?.generation != dismissed && overlay == Overlay.None && onTop
+            val showKeyboard = editor?.visible == true && overlay == Overlay.None && onTop
             androidx.compose.animation.AnimatedVisibility(showKeyboard, Modifier.align(Alignment.BottomCenter),
                 enter = slideInVertically(tween(160)) { it }, exit = slideOutVertically(tween(120)) { it }) {
-                editor?.let { e -> CarKeyboardView(e.action, onHide = { dismissed = e.generation }) }
+                editor?.let { e -> CarKeyboardView(e.action, onHide = CarKeyboard::hide) }
             }
         }
     }

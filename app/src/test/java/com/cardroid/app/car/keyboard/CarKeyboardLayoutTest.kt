@@ -43,4 +43,9 @@ class CarKeyboardLayoutTest {
     @Test fun submittingActionsHideTheKeyboard() {
         assertEquals(setOf(EnterAction.GO, EnterAction.SEARCH, EnterAction.SEND, EnterAction.DONE), EnterAction.entries.filter { it.hidesKeyboard }.toSet())
     }
+    @Test fun panelTapHidesUnlessTheEditorReportsAClickAfterIt() {
+        assertTrue(KeyboardRules.hideAfterPanelTap(tapAtMs = 1_000, lastEditorClickMs = 0))
+        assertTrue(KeyboardRules.hideAfterPanelTap(tapAtMs = 1_000, lastEditorClickMs = 900))
+        assertEquals(false, KeyboardRules.hideAfterPanelTap(tapAtMs = 1_000, lastEditorClickMs = 1_050))
+    }
 }
