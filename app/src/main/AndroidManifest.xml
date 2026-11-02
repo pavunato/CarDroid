@@ -51,6 +51,14 @@
         android:theme="@android:style/Theme.Material.Light.NoActionBar"
         android:usesCleartextTraffic="true">
 
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.diagnostics"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/diagnostic_file_paths" />
+        </provider>
+
         <!-- Crash reports only: no custom keys, logs or analytics are sent (debug builds disable it). -->
         <meta-data
             android:name="firebase_crashlytics_collection_enabled"

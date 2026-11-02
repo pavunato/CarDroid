@@ -392,7 +392,8 @@ class CarDroidService : Service() {
         startCtrlIntServer(sc, identity.name, preferredNetwork = null, phase = "pre-WiFi")
 
         val p = CarDroidPipeline.bluetooth(adapter, identity, mfi, wifi, log = CarDroidLog::log,
-            diagnostics = CarDroidLog.diagnostics, diagnosticToken = diagnosticToken)
+            diagnostics = CarDroidLog.diagnostics, diagnosticToken = diagnosticToken,
+            bluetoothIdentifier = ::bluetoothMac)
         pipeline = p
         teardownGuard.rearm()
         p.onLinkUp = { teardownGuard.rearm() }

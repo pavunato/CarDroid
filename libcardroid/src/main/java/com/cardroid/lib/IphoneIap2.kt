@@ -12,6 +12,14 @@ import java.util.UUID
  * for byte because their field layouts are only known from those captures.
  */
 object IphoneIap2 {
+    fun wirelessAvailability(): ByteArray = Iap2ControlSession.build(0x4E0D, Iap2ControlSession.param(0, byteArrayOf(1)))
+
+    /** Omit the notification when Android cannot provide the actual transport identifier. */
+    fun bluetoothTransportIdentifier(address: String?): ByteArray? {
+        val valid = address?.takeIf { Regex("(?i)^(?:[0-9a-f]{2}:){5}[0-9a-f]{2}$").matches(it) }
+            ?.takeUnless { it.equals("02:00:00:00:00:00", ignoreCase = true) } ?: return null
+        return Iap2ControlSession.build(0x4E0E, Iap2ControlSession.param(0, (valid.uppercase() + "\u0000").toByteArray()))
+    }
     const val WIRELESS_SESSION_ID = 0x4E0C
     const val DEVICE_TIME = 0x4E0B
     const val DEVICE_LANGUAGE = 0x4E0A

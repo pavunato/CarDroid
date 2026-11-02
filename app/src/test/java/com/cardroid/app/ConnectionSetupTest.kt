@@ -48,6 +48,25 @@ class ConnectionSetupTest {
     @Test fun preparedConnectionKeepsCancelAvailable() {
         assertEquals(NextStep.Kind.Connecting, step(helper = HelperClient.State.Connected(123, 35), session = CarPlaySession.State.LinkUp))
     }
+    @Test fun mediaReadyChangesEndpointStatusWithoutClaimingPicture() {
+        val endpoint = CarPlaySession.AirPlayEndpoint("192.0.2.1", 7000, "", "", "")
+        val pending = nextStep(PermissionSnapshot(emptyList()), true, CarPlaySession.State.CarPlayAirPlayStart(endpoint),
+            ShizukuHelperStarter.State.Ready, HelperClient.State.Connected(123, 35), mediaReady = false)
+        assertEquals("Waiting for media…", pending.action)
+        val ready = nextStep(PermissionSnapshot(emptyList()), true, CarPlaySession.State.CarPlayAirPlayStart(endpoint),
+            ShizukuHelperStarter.State.Ready, HelperClient.State.Connected(123, 35), mediaReady = true)
+        assertEquals("Car media ready", ready.title)
+        assertEquals("Media ready", ready.action)
+        assertEquals("Check the car display for the picture", ready.detail)
+    }
+    @Test fun mediaReadyDoesNotHideAFailedSessionOrMissingHelper() {
+        val failed = nextStep(PermissionSnapshot(emptyList()), true, CarPlaySession.State.Failed("failed"),
+            ShizukuHelperStarter.State.Ready, HelperClient.State.Connected(123, 35), mediaReady = true)
+        assertEquals(NextStep.Kind.Retry, failed.kind)
+        val missing = nextStep(PermissionSnapshot(emptyList()), true, CarPlaySession.State.LinkUp,
+            ShizukuHelperStarter.State.Ready, HelperClient.State.NotRunning, mediaReady = true)
+        assertEquals(NextStep.Kind.Helper, missing.kind)
+    }
     @Test fun listenerShowsWaitingInsteadOfOfferingConnectAgain() {
         val next = nextStep(PermissionSnapshot(emptyList()), true, CarPlaySession.State.Idle,
             ShizukuHelperStarter.State.Ready, HelperClient.State.Connected(123, 35), listening = true)

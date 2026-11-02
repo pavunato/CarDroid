@@ -13,7 +13,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.core.content.FileProvider
 import com.cardroid.lib.ConnectionDiagnostics
+import java.io.File
 
 @Composable
 internal fun ConnectionDiagnosticsCard(onDiscoverable: () -> Unit, onStop: () -> Unit, onRetry: () -> Unit) {
@@ -52,10 +54,19 @@ internal fun ConnectionDiagnosticsCard(onDiscoverable: () -> Unit, onStop: () ->
                     Toast.makeText(context, "Sanitized report copied", Toast.LENGTH_SHORT).show()
                 }) { Text("Copy report") }
                 TextButton(onClick = {
-                    runCatching { context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND)
-                        .setType("text/plain").putExtra(Intent.EXTRA_TEXT, report())
-                        .putExtra(Intent.EXTRA_SUBJECT, "CarDroid connection diagnostics"), "Share sanitized report")) }
-                        .onFailure { Toast.makeText(context, "No sharing app available; use Copy report", Toast.LENGTH_LONG).show() }
+                    runCatching {
+                        val directory = File(context.cacheDir, "diagnostic-reports")
+                        check(directory.isDirectory || directory.mkdirs())
+                        val file = File.createTempFile("cardroid-report-", ".txt", directory)
+                        file.writeText(report(), Charsets.UTF_8)
+                        val uri = FileProvider.getUriForFile(context, "${context.packageName}.diagnostics", file)
+                        val send = Intent(Intent.ACTION_SEND).setType("text/plain")
+                            .putExtra(Intent.EXTRA_STREAM, uri)
+                            .putExtra(Intent.EXTRA_SUBJECT, "CarDroid connection diagnostics")
+                            .apply { clipData = ClipData.newRawUri("CarDroid diagnostics", uri) }
+                            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        context.startActivity(Intent.createChooser(send, "Share sanitized report"))
+                    }.onFailure { Toast.makeText(context, "Could not share report; use Copy report", Toast.LENGTH_LONG).show() }
                 }) { Text("Share") }
             }
             TextButton(onClick = { confirmSend = true }) { Text("Send to developer") }

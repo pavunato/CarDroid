@@ -261,6 +261,7 @@ internal fun nextStep(
     shizuku: ShizukuHelperStarter.State,
     helper: HelperClient.State,
     listening: Boolean = false,
+    mediaReady: Boolean = false,
 ): NextStep = when {
     !permissions.allGranted -> NextStep(
         "Allow permissions",
@@ -290,6 +291,8 @@ internal fun nextStep(
         "Prepare car display", "Finish display setup while the receiver connects", "Prepare display", NextStep.Kind.Helper)
     state is CarPlaySession.State.Failed ->
         NextStep("Couldn't connect", state.reason.ifBlank { "The receiver stopped the handshake" }.take(80), "Try again", NextStep.Kind.Retry)
+    mediaReady && (helper is HelperClient.State.Connected || helper is HelperClient.State.DisplayActive) ->
+        NextStep("Car media ready", "Check the car display for the picture", "Media ready", NextStep.Kind.Ready)
     state is CarPlaySession.State.CarPlayAirPlayStart ->
         NextStep("Setting up car media", "Endpoint received; see live checks below for media readiness", "Waiting for media…", NextStep.Kind.Ready)
     state == CarPlaySession.State.Idle && listening ->
@@ -349,6 +352,7 @@ private fun CarDroidScreen(
         }
     }
     val listening by CarDroidService.available.collectAsState()
+    val diagnostics by CarDroidLog.diagnostics.state.collectAsState()
     val starPrompt by CarDroidService.starPrompt.collectAsState()
     if (starPrompt) androidx.compose.material3.AlertDialog(
         onDismissRequest = { CarDroidService.starPrompt.value = false },
@@ -363,8 +367,11 @@ private fun CarDroidScreen(
         },
         dismissButton = { TextButton(onClick = { CarDroidService.starPrompt.value = false }) { Text("Not now") } },
     )
-    val step = nextStep(permissionSnapshot, bluetoothOn, state, shizuku, helper, listening)
-    val sessionActive = listening || (state != CarPlaySession.State.Idle && state !is CarPlaySession.State.Failed)
+    val mediaReady = diagnostics.running &&
+        diagnostics.stage == com.cardroid.lib.ConnectionDiagnostics.Stage.MEDIA &&
+        diagnostics.lastError != "HELPER_NOT_RUNNING"
+    val step = nextStep(permissionSnapshot, bluetoothOn, state, shizuku, helper, listening, mediaReady)
+    val sessionActive = mediaReady || listening || (state != CarPlaySession.State.Idle && state !is CarPlaySession.State.Failed)
     val connect = {
         CarDroidSettings.setAutoStartHelperViaShizuku(true)
         onStartBt()

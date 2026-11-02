@@ -4,6 +4,34 @@ import com.cardroid.lib.ConnectionDiagnostics
 import kotlin.test.*
 
 class ConnectionDiagnosticsTest {
+    @Test fun successfulFullAdvertisingClearsOnlyEarlierAdvertisingErrors() {
+        val d = ConnectionDiagnostics(); val token = d.begin()
+        d.ble(token, ConnectionDiagnostics.Status.FAILED, "DATA_TOO_LARGE")
+        d.ble(token, ConnectionDiagnostics.Status.FULL)
+        assertNull(d.state.value.lastError)
+        d.failure(token, "WIFI_JOIN_FAILED")
+        d.ble(token, ConnectionDiagnostics.Status.FULL)
+        assertEquals("WIFI_JOIN_FAILED", d.state.value.lastError)
+    }
+    @Test fun transportMetadataIsAllowlistedBoundedAndSurvivesStop() {
+        val d = ConnectionDiagnostics(); val token = d.begin()
+        d.control(token, ConnectionDiagnostics.ControlEvent.SENT, 0x5702, 42)
+        d.control(token, ConnectionDiagnostics.ControlEvent.ACKNOWLEDGED, 0x5702, 42)
+        d.control(token, ConnectionDiagnostics.ControlEvent.RECEIVED, 0xDEAD, 99)
+        d.socketEnd(token, ConnectionDiagnostics.SocketEnd.READ_IO_EXCEPTION)
+        d.stop()
+        val report = d.report()
+        assertTrue(report.contains("iAP2 SENT 0x5702 seq=42"))
+        assertTrue(report.contains("iAP2 ACKNOWLEDGED 0x5702 seq=42"))
+        assertTrue(report.contains("RFCOMM session detail: READ_IO_EXCEPTION"))
+        assertFalse(report.contains("DEAD"))
+        d.control(token, ConnectionDiagnostics.ControlEvent.RECEIVED, 0x5703)
+        assertFalse(d.report().contains("iAP2 RECEIVED 0x5703"))
+
+        val next = d.begin()
+        repeat(250) { d.control(next, ConnectionDiagnostics.ControlEvent.SENT, 0x5702, it % 256) }
+        assertEquals(200, d.state.value.events.size)
+    }
     private class FakeScheduler {
         val tasks = mutableListOf<Pair<Long, () -> Unit>>()
         val schedule: (Long, () -> Unit) -> Unit = { ms, task -> tasks += ms to task }
@@ -116,12 +144,12 @@ class ConnectionDiagnosticsTest {
         e.ended(t, "video send failed: Broken pipe (192.168.4.1)")
         assertEquals("VIDEO_SEND_FAILED", e.state.value.lastError)
     }
-    @Test fun sessionEndWithoutPriorReasonNamesTheReceiver() {
+    @Test fun socketCloseDoesNotClaimTheReceiverCausedIt() {
         for (reason in listOf("RFCOMM closed", "event channel ended: Broken pipe")) {
             val d = ConnectionDiagnostics(); val token = d.begin()
             d.reached(token, ConnectionDiagnostics.Stage.SOCKET)
             d.ended(token, reason)
-            assertEquals("SESSION_ENDED_BY_RECEIVER", d.state.value.lastError, reason)
+            assertEquals("SESSION_ENDED", d.state.value.lastError, reason)
         }
         val d = ConnectionDiagnostics(); val token = d.begin()
         d.reached(token, ConnectionDiagnostics.Stage.SOCKET)

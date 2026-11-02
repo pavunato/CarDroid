@@ -117,8 +117,8 @@ off  bytes  field
 | `0xAA05` | iPhone → accessory | AuthenticationSucceeded |
 | `0x5702` | iPhone → accessory | RequestAccessoryWiFiConfigurationInformation |
 | `0x5703` | accessory → iPhone | AccessoryWiFiConfigurationInformation |
-| `0x4E0D` | accessory → iPhone | WirelessCarPlayUpdate |
-| `0x4E0E` | accessory → iPhone | DeviceTransportIdentifierNotification |
+| `0x4E0D` | iPhone → accessory | WirelessCarPlayUpdate |
+| `0x4E0E` | iPhone → accessory | DeviceTransportIdentifierNotification |
 | `0xEA00` | accessory → iPhone | StartExternalAccessoryProtocolSession |
 | `0xEA01` | accessory → iPhone | StopExternalAccessoryProtocolSession |
 | `0xAE00` | accessory → iPhone | StartPowerUpdates |

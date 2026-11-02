@@ -9,6 +9,9 @@ class ConnectionDiagnostics(
     private val schedule: (Long, () -> Unit) -> Unit = ::defaultSchedule,
 ) {
     enum class WifiJoin { NONE, PENDING, JOINED, TIMEOUT, FAILED }
+    enum class ControlEvent { SENT, RECEIVED, ACKNOWLEDGED, RETRANSMITTED }
+    enum class SocketEnd { FRAME_READ_STOPPED, READ_IO_EXCEPTION, SESSION_EXCEPTION }
+    enum class LinkEvent { RETRY_EXHAUSTED, PEER_RESET, UNEXPECTED_SYN, EXTENDED_ACK, DUPLICATE_DATA, OUT_OF_ORDER_DATA, SEND_QUEUE_UNAVAILABLE, WRITE_FAILED, FRAME_TOO_LARGE, IDENTIFIER_UNAVAILABLE }
     enum class Status { STOPPED, STARTING, SUPPORTED, FULL, FALLBACK, FAILED, UNAVAILABLE }
     enum class Stage(val label: String) {
         WAITING("Waiting for receiver"), SOCKET("Receiver Bluetooth socket accepted"),
@@ -73,10 +76,38 @@ class ConnectionDiagnostics(
         val next = change(mutable.value)
         // Two layers can report the same transition (e.g. LINK); keep one timeline line. A new SOCKET is a new attempt.
         val repeat = event != Stage.SOCKET.label && next.events.lastOrNull()?.substringAfter(": ") == event
-        mutable.value = if (repeat) next else next.copy(events = (next.events + "${System.currentTimeMillis()}: $event").takeLast(60))
+        mutable.value = if (repeat) next else next.copy(events = (next.events + "${System.currentTimeMillis()}: $event").takeLast(200))
+    }
+    /** Metadata only: never include arbitrary peer messages, parameters, or exception text. */
+    @Synchronized fun control(token: Long, event: ControlEvent, messageId: Int, sequence: Int? = null) {
+        if (messageId !in DIAGNOSTIC_MESSAGE_IDS) return
+        val seq = sequence?.takeIf { it in 0..255 }?.let { " seq=$it" }.orEmpty()
+        update(token, "iAP2 ${event.name} 0x%04X%s".format(messageId, seq)) { it }
+    }
+    @Synchronized fun socketEnd(token: Long, end: SocketEnd) = update(token, "RFCOMM session detail: ${end.name}") { it }
+    @Synchronized fun linkEvent(token: Long, event: LinkEvent) = update(token, "iAP2 link: ${event.name}") {
+        val error = when (event) {
+            LinkEvent.RETRY_EXHAUSTED -> "LINK_RETRY_EXHAUSTED"
+            LinkEvent.PEER_RESET -> "LINK_PEER_RESET"
+            LinkEvent.UNEXPECTED_SYN -> "LINK_UNEXPECTED_SYN"
+            LinkEvent.WRITE_FAILED -> "LINK_WRITE_FAILED"
+            LinkEvent.SEND_QUEUE_UNAVAILABLE -> "LINK_SEND_UNAVAILABLE"
+            LinkEvent.FRAME_TOO_LARGE -> "LINK_FRAME_TOO_LARGE"
+            else -> null
+        }
+        it.copy(lastError = error ?: it.lastError)
+    }
+    @Synchronized fun linkParameters(token: Long, window: Int, timeoutMs: Long, retries: Int) {
+        if (window !in 1..127 || timeoutMs !in 100..10_000 || retries !in 0..30) return
+        update(token, "iAP2 link parameters: window=$window retransmitMs=$timeoutMs maxRetries=$retries") { it }
+    }
+    @Synchronized fun linkCounts(token: Long, pending: Int, queued: Int) {
+        if (pending !in 0..128 || queued !in 0..128) return
+        update(token, "iAP2 send window: pending=$pending queued=$queued") { it }
     }
     @Synchronized fun ble(token: Long, status: Status, reason: String? = null) = update(token, "BLE $status") {
-        it.copy(ble = status, lastError = safeReason(reason) ?: it.lastError)
+        val previous = if (status == Status.FULL && it.lastError in ADVERTISING_ERRORS) null else it.lastError
+        it.copy(ble = status, lastError = safeReason(reason) ?: previous)
     }
     @Synchronized fun listener(token: Long, status: Status, reason: String? = null) = update(token, "Listener $status") {
         it.copy(listener = status, lastError = safeReason(reason) ?: it.lastError)
@@ -147,10 +178,10 @@ class ConnectionDiagnostics(
         stage?.let { reached(token, it) }
         if (stage == Stage.WIFI_CONFIG) wifiJoinPending(token)
     }
-    /** Keeps only who ended the session: RFCOMM EOF / media-channel EOF come from the receiver; a failed local handshake is ours. */
+    /** Socket reads can fail locally as well as remotely; do not infer who closed them. */
     private fun endReason(reason: String?): String = when {
         reason == null -> "SESSION_ENDED"
-        reason == "RFCOMM closed" || reason.startsWith("event channel ended") -> "SESSION_ENDED_BY_RECEIVER"
+        reason == "RFCOMM closed" || reason.startsWith("event channel ended") -> "SESSION_ENDED"
         reason.startsWith("handshake failed") -> "SESSION_CLOSED_LOCALLY"
         reason.startsWith("video send failed") -> "VIDEO_SEND_FAILED"
         else -> safeReason(reason) ?: "SESSION_ENDED"
@@ -167,7 +198,7 @@ class ConnectionDiagnostics(
         ?: if (!s.running) "Connection checks stopped; no error recorded." else "Reached “${s.stage.label}”; no error recorded."
 
     fun report(): String = state.value.let { s -> buildString {
-        appendLine("CarDroid connection diagnostics v1 (sanitized)")
+        appendLine("CarDroid connection diagnostics v2 (sanitized)")
         appendLine("Current: ${s.title}")
         appendLine("Bluetooth advertising: ${s.bleDetail}")
         appendLine("Classic SDP / RFCOMM listener: ${if (s.listener == Status.FULL) "LISTENING (local SDP registered)" else s.listener.name}")
@@ -183,6 +214,8 @@ class ConnectionDiagnostics(
         appendLine("Raw logs, names, addresses, SSIDs, passwords, pairing/authentication keys and payloads are excluded.")
     } }
     companion object {
+        private val DIAGNOSTIC_MESSAGE_IDS = setOf(0x1D00, 0x1D01, 0x1D02, 0x1D03, 0xAA00, 0xAA01, 0xAA02, 0xAA03, 0xAA04, 0xAA05, 0x5702, 0x5703, 0x4300, 0x4301, 0x4E0D, 0x4E0E, 0x5000, 0x5001, 0x4154, 0x4155, 0x4157, 0x4158, 0x4170, 0x4171, 0x5200, 0xAE00)
+        private val ADVERTISING_ERRORS = setOf("DATA_TOO_LARGE", "TOO_MANY_ADVERTISERS", "ALREADY_STARTED", "INTERNAL_ERROR", "FEATURE_UNSUPPORTED")
         /** Plain words for each typed code; codes never carry user data. */
         fun meaning(code: String): String = when (code) {
             "HELPER_NOT_RUNNING" -> "the display helper was not running, so CarDroid closed the car video"
@@ -193,6 +226,12 @@ class ConnectionDiagnostics(
             "SESSION_ENDED_BY_RECEIVER" -> "the receiver ended the session without giving a reason"
             "SESSION_CLOSED_LOCALLY" -> "CarDroid ended the session after a local failure"
             "SESSION_ENDED" -> "the session ended"
+            "LINK_RETRY_EXHAUSTED" -> "the Bluetooth link stopped after unacknowledged frames exhausted retries"
+            "LINK_PEER_RESET" -> "the receiver sent a link reset"
+            "LINK_UNEXPECTED_SYN" -> "the receiver restarted link negotiation during an active session"
+            "LINK_WRITE_FAILED" -> "writing to the Bluetooth connection failed"
+            "LINK_SEND_UNAVAILABLE" -> "the Bluetooth send queue was unavailable or full"
+            "LINK_FRAME_TOO_LARGE" -> "a control message exceeded the receiver's advertised frame size"
             "VIDEO_SEND_FAILED" -> "sending video to the receiver failed"
             "AIRPLAY_FAILED" -> "the AirPlay handshake with the receiver failed"
             "AUTH_FAILED" -> "the receiver rejected authentication"

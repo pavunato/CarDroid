@@ -6,6 +6,7 @@ import android.bluetooth.BluetoothServerSocket
 import android.bluetooth.BluetoothSocket
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -57,8 +58,10 @@ class Iap2Transport(
     private var lastAck: Byte = 0
     private var waitingForPeerAckAfterSyn = false
     private var linkNormal = false
-    private var pendingControlFrame: Iap2Frame? = null
-    private var pendingControlRetransmits = 0
+    private val linkLock = Any()
+    private var sendWindow: Iap2SendWindow? = null
+    private var peerMaxFrameLength = 8192
+    private var receiveSequence = Iap2ReceiveSequence()
     private var sentAnySequencedFrame = false
     private var sentDetectEcho = false
     /** Seq of the last car data frame (payload, non-SYN); a repeat means the car retransmitted. */
@@ -173,6 +176,23 @@ class Iap2Transport(
         val out = output ?: return@withContext
         val inp = input ?: return@withContext
 
+        val sessionSocket = socket
+        val timer = CoroutineScope(currentCoroutineContext()).launch {
+            while (isActive) {
+                delay(100)
+                val ok = try { synchronized(linkLock) { sendWindow?.tick(monotonicMs()) ?: true } }
+                catch (_: java.io.IOException) {
+                    diagnostics.linkEvent(diagnosticToken, ConnectionDiagnostics.LinkEvent.WRITE_FAILED)
+                    runCatching { sessionSocket?.close() }
+                    break
+                }
+                if (!ok) {
+                    diagnostics.linkEvent(diagnosticToken, ConnectionDiagnostics.LinkEvent.RETRY_EXHAUSTED)
+                    runCatching { sessionSocket?.close() }
+                    break
+                }
+            }
+        }
         try {
             // Per reference/reference client (link_layer_client.py): _sent_psn = 1.
             // First frame (SYN|ACK) goes at seq=1, first data at seq=2. Starting
@@ -183,8 +203,7 @@ class Iap2Transport(
             negotiatedControlSession = Iap2Constants.CONTROL_SESSION_ID
             waitingForPeerAckAfterSyn = false
             linkNormal = false
-            pendingControlFrame = null
-            pendingControlRetransmits = 0
+            synchronized(linkLock) { sendWindow = null; receiveSequence = Iap2ReceiveSequence() }
             sentAnySequencedFrame = false
             sentDetectEcho = false
             lastRxDataSeq = -1
@@ -239,13 +258,18 @@ class Iap2Transport(
                         onRawWire = { wire ->
                             onLog("rx wire ${wire.size}B: " + wire.joinToString("") { "%02X".format(it) })
                         },
-                    ) ?: break
+                    )
                 } catch (e: java.io.IOException) {
+                    if (!stopped) diagnostics.socketEnd(diagnosticToken, ConnectionDiagnostics.SocketEnd.READ_IO_EXCEPTION)
                     onLog("RFCOMM closed by peer: ${e.message}")
                     break
                 }
+                if (frame == null) {
+                    // readFrom returns null on EOF as well as malformed or truncated frames.
+                    if (!stopped) diagnostics.socketEnd(diagnosticToken, ConnectionDiagnostics.SocketEnd.FRAME_READ_STOPPED)
+                    break
+                }
                 flushSkipped()
-                lastAck = frame.seq
                 val ctrl = frame.control.toInt() and 0xFF
                 val flags = buildString {
                     if (ctrl and 0x80 != 0) append("SYN ")
@@ -259,10 +283,34 @@ class Iap2Transport(
                     onLog("  payload hex: " + frame.payload.take(64).joinToString("") { "%02X".format(it) } +
                             if (frame.payload.size > 64) "..." else "")
                 }
+                if (ctrl and 0x10 != 0) {
+                    diagnostics.linkEvent(diagnosticToken, ConnectionDiagnostics.LinkEvent.PEER_RESET)
+                    break
+                }
+                if (ctrl and 0x80 != 0 && linkNormal) {
+                    diagnostics.linkEvent(diagnosticToken, ConnectionDiagnostics.LinkEvent.UNEXPECTED_SYN)
+                    break
+                }
                 if (ctrl and 0x40 != 0) {
-                    handlePeerAck(frame.ack)
+                    synchronized(linkLock) {
+                        sendWindow?.let { window ->
+                            window.acknowledge(frame.ack, monotonicMs())
+                            diagnostics.linkCounts(diagnosticToken, window.pendingCount, window.queuedCount)
+                        }
+                    }
                 }
                 logBtRx(frame, ctrl)
+                if (ctrl and 0x20 != 0) {
+                    diagnostics.linkEvent(diagnosticToken, ConnectionDiagnostics.LinkEvent.EXTENDED_ACK)
+                    val ok = synchronized(linkLock) {
+                        sendWindow?.retransmitRequested(frame.payload, monotonicMs()) ?: true
+                    }
+                    if (!ok) {
+                        diagnostics.linkEvent(diagnosticToken, ConnectionDiagnostics.LinkEvent.RETRY_EXHAUSTED)
+                        break
+                    }
+                    continue
+                }
 
                 // Handle SYN from peer. In reactive mode we adopt the car's
                 // LSP and reply with SYN|ACK carrying our own LSP. Then we wait
@@ -282,7 +330,10 @@ class Iap2Transport(
                         // state where they refuse to advance past the SYN exchange.
                         adoptedPeerLsp = peerLsp
                     }
-                    lastAck = frame.seq
+                    synchronized(linkLock) {
+                        lastAck = frame.seq
+                        if (sendWindow == null) configureSendWindow(peerLsp ?: linkSyncParams)
+                    }
 
                     if (waitingForPeerAckAfterSyn && ctrl and 0x40 != 0 && frame.ack == outSeq) {
                         linkNormal = true
@@ -316,17 +367,33 @@ class Iap2Transport(
                 // session; an un-ACKed frame is retransmitted until the peer
                 // gives up on the link. Only control-session payloads are dispatched.
                 if (frame.payload.isNotEmpty()) {
-                    if (frame.session == Iap2Constants.CONTROL_SESSION_ID ||
-                        frame.session == negotiatedControlSession
-                    ) {
-                        handleControlPayload(frame.payload)
+                    val result = synchronized(linkLock) {
+                        val sequence = receiveSequence.accept(frame.seq)
+                        if (sequence == Iap2ReceiveSequence.Result.ACCEPTED) lastAck = frame.seq
+                        sequence
                     }
-                    sendBareAck(frame.seq)
+                    if (result == Iap2ReceiveSequence.Result.ACCEPTED &&
+                        (frame.session == Iap2Constants.CONTROL_SESSION_ID || frame.session == negotiatedControlSession)) {
+                        handleControlPayload(frame.payload, frame.seq)
+                    } else if (result != Iap2ReceiveSequence.Result.ACCEPTED) {
+                        diagnostics.linkEvent(diagnosticToken, if (result == Iap2ReceiveSequence.Result.DUPLICATE)
+                            ConnectionDiagnostics.LinkEvent.DUPLICATE_DATA else ConnectionDiagnostics.LinkEvent.OUT_OF_ORDER_DATA)
+                    }
+                    synchronized(linkLock) {
+                        if (result == Iap2ReceiveSequence.Result.OUT_OF_ORDER) {
+                            val missing = receiveSequence.missingBefore(frame.seq)
+                            if (missing.isNotEmpty()) sendExtendedAck(missing)
+                        }
+                        sendBareAck(receiveSequence.lastAccepted ?: frame.seq)
+                    }
                 }
             }
         } catch (t: Throwable) {
+            if (!stopped && t !is CancellationException) diagnostics.socketEnd(diagnosticToken, ConnectionDiagnostics.SocketEnd.SESSION_EXCEPTION)
             onLog("handleSession exception (non-fatal): ${t.javaClass.simpleName}: ${t.message}")
         }
+        timer.cancel()
+        synchronized(linkLock) { sendWindow = null }
         onLog("RFCOMM session ended")
         runCatching { onSessionEnded("RFCOMM closed") }
     }
@@ -351,13 +418,13 @@ class Iap2Transport(
         if (hasData) lastRxDataSeq = seq
         val control = sid == (Iap2Constants.CONTROL_SESSION_ID.toInt() and 0xFF) ||
             sid == (negotiatedControlSession.toInt() and 0xFF)
-        val handling = if (!hasData) "" else if (control) " dispatched+acked" else " acked(non-control session)"
+        val handling = if (!hasData) "" else if (control) " control-session" else " non-control-session"
         onLog("[bt-rx] $kind seq=0x%02X ack=0x%02X sid=0x%02X len=%d$msg$handling$retransmit".format(
             seq, frame.ack.toInt() and 0xFF, sid, frame.payload.size))
     }
 
     /** Send a bare link-layer ACK (no payload) acknowledging peer's [peerSeq]. */
-    private fun sendBareAck(peerSeq: Byte) {
+    private fun sendBareAck(peerSeq: Byte) = synchronized(linkLock) {
         val out = output ?: return
         val frame = Iap2Frame(
             control = 0x40.toByte(),  // ACK only
@@ -372,15 +439,20 @@ class Iap2Transport(
         onLog("  ACK wire ${wire.size}B: " + wire.joinToString("") { "%02X".format(it) })
     }
 
+    private fun sendExtendedAck(missing: ByteArray) {
+        val out = output ?: return
+        Iap2Frame(0x20, outSeq, lastAck, Iap2Constants.LINK_SESSION_ID, missing).let(out::writeFrame)
+    }
+
     /**
      * Send Link Sync with SYN|ACK after receiving the peer's SYN.
      * Per reference client: ECHO the peer's LSP bytes verbatim (we adopt the
      * peer's parameters). Sending our own LSP instead causes real cars to
      * silently refuse to advance past the SYN exchange.
      */
-    private fun sendLinkSyncAck(peerSeq: Byte) {
+    private fun sendLinkSyncAck(peerSeq: Byte) = synchronized(linkLock) {
         val out = output ?: return
-        advanceOutgoingSeq()
+        if (!waitingForPeerAckAfterSyn) advanceOutgoingSeq()
         val lspToEcho = adoptedPeerLsp ?: linkSyncParams
         val frame = Iap2LinkSync.buildSyncFrame(
             lspToEcho.copy(controlByte = 0xC0.toByte()),
@@ -398,73 +470,64 @@ class Iap2Transport(
         )
     }
 
-    private fun handlePeerAck(peerAck: Byte) {
-        val pending = pendingControlFrame ?: return
-        if (peerAck == pending.seq) {
-            onLog("  -> control seq=0x%02X acknowledged".format(pending.seq))
-            pendingControlFrame = null
-            pendingControlRetransmits = 0
-            return
-        }
+    private fun monotonicMs(): Long = System.nanoTime() / 1_000_000L
 
-        if (pendingControlRetransmits >= 3) {
-            if (pendingControlRetransmits == 3) {
-                pendingControlRetransmits += 1 // log exhaustion once
-                onLog("[bt-tx] control seq=0x%02X still unacked after 3 retransmits (peer ack=0x%02X)".format(pending.seq, peerAck))
-            }
-            return
-        }
-        val out = output ?: return
-        pendingControlRetransmits += 1
-        out.writeFrame(pending)
-        onLog(
-            "  -> retransmit control seq=0x%02X after peer ack=0x%02X attempt=%d".format(
-                pending.seq,
-                peerAck,
-                pendingControlRetransmits,
-            )
+    /** Called under linkLock; all frame writes and sequence/window changes share this lock. */
+    private fun configureSendWindow(peer: LinkSyncParameters) {
+        val window = (peer.maxOutgoing.toInt() and 0xff).coerceIn(1, 127)
+        val timeout = peer.retransmitTimeoutMs.coerceIn(100, 10_000).toLong()
+        val retries = (peer.maxRetransmits.toInt() and 0xff).coerceIn(0, 30)
+        peerMaxFrameLength = peer.maxRxPacketLen.coerceIn(9, 8192)
+        diagnostics.linkParameters(diagnosticToken, window, timeout, retries)
+        sendWindow = Iap2SendWindow(window, timeout, retries,
+            makeFrame = { payload ->
+                advanceOutgoingSeq()
+                Iap2Frame(0x40, outSeq, lastAck, negotiatedControlSession, payload)
+            },
+            emit = { frame, retransmit ->
+                output?.writeFrame(frame) ?: throw java.io.IOException("RFCOMM output unavailable")
+                val id = Iap2ControlSession.parse(frame.payload)?.first
+                if (id != null) diagnostics.control(diagnosticToken,
+                    if (retransmit) ConnectionDiagnostics.ControlEvent.RETRANSMITTED else ConnectionDiagnostics.ControlEvent.SENT,
+                    id, frame.seq.toInt() and 0xff)
+                onLog("[bt-tx] ${if (retransmit) "retransmit" else "control"} seq=${frame.seq.toInt() and 0xff} msg=${id?.let { "0x%04X".format(it) }}")
+            },
+            acknowledged = { frame ->
+                Iap2ControlSession.parse(frame.payload)?.first?.let {
+                    diagnostics.control(diagnosticToken, ConnectionDiagnostics.ControlEvent.ACKNOWLEDGED, it, frame.seq.toInt() and 0xff)
+                }
+            },
         )
     }
 
-    private suspend fun handleControlPayload(payload: ByteArray) {
+    private suspend fun handleControlPayload(payload: ByteArray, seq: Byte) {
         val parsed = Iap2ControlSession.parse(payload) ?: return
         val (id, params) = parsed
-        // Route all control-session messages through CarPlaySession. Only MFi
-        // auth payload construction uses the extracted OkCar behavior.
+        diagnostics.control(diagnosticToken, ConnectionDiagnostics.ControlEvent.RECEIVED, id, seq.toInt() and 0xff)
         _incomingControl.emit(id to params)
     }
 
     override fun sendControl(controlMessageBytes: ByteArray) {
-        val out = output ?: return
-        advanceOutgoingSeq()
-        // Verified against reference/iap2 client wire trace: data goes on the
-        // negotiated control session id (1 per car's LSP), NOT session 0. SYN
-        // and bare ACK frames stay on session 0. reference's "session 0 for
-        // control/auth" appears to refer to the link-layer catalog entry, not
-        // the wire field.
-        val frame = Iap2Frame(
-            control = 0x40.toByte(), // ACK bit (data with ACK), per reference._send_data
-            seq = outSeq,
-            ack = lastAck,
-            session = negotiatedControlSession,
-            payload = controlMessageBytes,
-        )
-        out.writeFrame(frame)
-        pendingControlFrame = frame
-        pendingControlRetransmits = 0
-
-        val messageId = Iap2ControlSession.parse(controlMessageBytes)?.first
-        val idText = messageId?.let { " msg=0x%04X".format(it) }.orEmpty()
-        val wire = frame.encode()
-        onLog(
-            "tx ctrl=0x40 seq=0x%02X ack=0x%02X sid=0x%02X$idText len=%d wire=%s".format(
-                outSeq,
-                lastAck,
-                negotiatedControlSession,
-                controlMessageBytes.size,
-                wire.joinToString("") { "%02X".format(it) },
-            )
-        )
+        try {
+            val queued = synchronized(linkLock) {
+                if (controlMessageBytes.size + 10 > peerMaxFrameLength) {
+                    diagnostics.linkEvent(diagnosticToken, ConnectionDiagnostics.LinkEvent.FRAME_TOO_LARGE)
+                    runCatching { socket?.close() }
+                    return
+                } else sendWindow?.let { window ->
+                    val ok = window.enqueue(controlMessageBytes, monotonicMs())
+                    diagnostics.linkCounts(diagnosticToken, window.pendingCount, window.queuedCount)
+                    ok
+                } ?: false
+            }
+            if (!queued) {
+                diagnostics.linkEvent(diagnosticToken, ConnectionDiagnostics.LinkEvent.SEND_QUEUE_UNAVAILABLE)
+                runCatching { socket?.close() }
+            }
+        } catch (e: java.io.IOException) {
+            diagnostics.linkEvent(diagnosticToken, ConnectionDiagnostics.LinkEvent.WRITE_FAILED)
+            runCatching { socket?.close() }
+        }
     }
 
     private fun advanceOutgoingSeq() {

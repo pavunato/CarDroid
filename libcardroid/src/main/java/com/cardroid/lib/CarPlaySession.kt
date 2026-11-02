@@ -25,15 +25,15 @@ class CarPlaySession(
     private val mfi: MfiAuthProvider,
     private val wifi: WifiHandoff,
     /**
-     * Send the real-iPhone post-auth burst and subscription replies on this link.
-     * Only the windowed control-channel responder enables it; the Bluetooth
-     * transport tracks a single outstanding frame (car window is 5).
+     * Send the captured post-auth burst and supported subscription replies.
      */
     private val iphoneBehavior: Boolean = false,
     private val nowPlaying: () -> NowPlayingState = { NowPlayingState() },
     private val deviceName: String = IPhoneIdentity.DEVICE_NAME,
     private val diagnostics: ConnectionDiagnostics? = null,
     private val diagnosticToken: Long = 0,
+    private val bluetoothNotifications: Boolean = false,
+    private val bluetoothIdentifier: () -> String? = { null },
 ) {
     sealed interface State {
         data object Idle : State
@@ -75,6 +75,7 @@ class CarPlaySession(
 
     private var requestedMfiCertificate = false
     private var availabilitySent = false
+    private var lastWifiConfiguration: WifiHandoff.NetworkInfo? = null
     private var accessoryName = ""
     private var nowPlayingSubscribed = false
     private var lastNowPlaying: NowPlayingState? = null
@@ -173,6 +174,12 @@ class CarPlaySession(
         transport.sendAuthStatusOk()
         transport.diagnostic("Sent AuthenticationSucceeded (0xAA05)")
         if (iphoneBehavior) sendPostAuthBurst()
+        if (bluetoothNotifications) {
+            transport.sendControl(IphoneIap2.wirelessAvailability())
+            val identifier = IphoneIap2.bluetoothTransportIdentifier(bluetoothIdentifier())
+            if (identifier != null) transport.sendControl(identifier)
+            else diagnostics?.linkEvent(diagnosticToken, ConnectionDiagnostics.LinkEvent.IDENTIFIER_UNAVAILABLE)
+        }
 
         sessionState = State.AuthComplete
 
@@ -209,6 +216,7 @@ class CarPlaySession(
     fun onSessionEnded() {
         requestedMfiCertificate = false
         availabilitySent = false
+        lastWifiConfiguration = null
         accessoryName = ""
         nowPlayingSubscribed = false; lastNowPlaying = null
         sessionState = State.Idle
@@ -217,6 +225,7 @@ class CarPlaySession(
     fun onLinkUp() {
         requestedMfiCertificate = false
         availabilitySent = false
+        lastWifiConfiguration = null
         accessoryName = ""
         nowPlayingSubscribed = false; lastNowPlaying = null
         sessionState = State.LinkUp
@@ -282,6 +291,17 @@ class CarPlaySession(
             bssid = bssid,
             channel = channel,
         )
+        val previous = lastWifiConfiguration
+        val retryNeeded = diagnostics?.state?.value?.let {
+            it.wifiJoin == ConnectionDiagnostics.WifiJoin.FAILED ||
+                it.wifiJoin == ConnectionDiagnostics.WifiJoin.TIMEOUT || it.lastError == "WIFI_LOST"
+        } ?: false
+        if (previous != null && previous.ssid == network.ssid && previous.passphrase == network.passphrase &&
+            previous.channel == network.channel && previous.bssid.contentEquals(network.bssid) && !retryNeeded) {
+            transport.diagnostic("Duplicate accessory WiFi configuration ignored")
+            return
+        }
+        lastWifiConfiguration = network
         sessionState = State.WifiHandoffReceived(ssid)
         transport.diagnostic("Accessory WiFi information received: ssid=$ssid channel=$channel")
         wifi.connectToAccessory(network)

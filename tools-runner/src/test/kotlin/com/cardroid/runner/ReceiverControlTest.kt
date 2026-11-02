@@ -15,17 +15,80 @@ class ReceiverControlTest {
         override fun start(scope: CoroutineScope) {}
         override fun stop() {}
         override fun sendControl(controlMessageBytes: ByteArray) { sent += controlMessageBytes }
-        override fun sendMfiCertResponse(hash: ByteArray) {}
-        override fun sendAuthStatusOk() {}
+        override fun sendMfiCertResponse(hash: ByteArray) { sendControl(Iap2ControlSession.build(0xAA02, Iap2ControlSession.param(0, hash))) }
+        override fun sendAuthStatusOk() { sendControl(Iap2ControlSession.build(0xAA05)) }
         override fun sendAuthenticationResponse(signature: ByteArray) {}
         override fun diagnostic(msg: String) {}
+    }
+
+    @Test fun receiverStyleHandshakeReachesWifiAndCarPlayAvailability() = runBlocking {
+        val transport = Transport()
+        val networks = mutableListOf<WifiHandoff.NetworkInfo>()
+        val wifi = object : WifiHandoff {
+            override fun connectToAccessory(network: WifiHandoff.NetworkInfo) { networks += network }
+            override fun tearDown() {}
+        }
+        val session = CarPlaySession(transport, OkcarBypassProvider(), wifi,
+            iphoneBehavior = true, bluetoothNotifications = true)
+        session.onLinkUp()
+        session.startControlFlow()
+        session.onControlMessage(0x1D01, Iap2ControlSession.param(0, "Receiver\u0000".encodeToByteArray()))
+        session.onControlMessage(0xAA01, Iap2ControlSession.param(0, byteArrayOf(1)))
+        session.onControlMessage(0xAA03, Iap2ControlSession.param(0, byteArrayOf(1)))
+        val beforeWifi = transport.sent.map { Iap2ControlSession.parse(it)!!.first }
+        assertEquals(listOf(0x1D00, 0x1D02, 0xAA00, 0xAA02, 0xAA05), beforeWifi.take(5))
+        assertEquals(0x5702, beforeWifi.last())
+        // DiPlay's 5703 fields: SSID 1, passphrase 2, security 3, channel 4.
+        val config = Iap2ControlSession.param(1, "Receiver\u0000".encodeToByteArray()) +
+            Iap2ControlSession.param(2, "test-pass\u0000".encodeToByteArray()) +
+            Iap2ControlSession.param(3, byteArrayOf(2)) + Iap2ControlSession.param(4, byteArrayOf(36))
+        session.onControlMessage(0x5703, config)
+        session.onControlMessage(0x5703, config)
+        assertEquals(1, networks.size)
+        assertEquals("Receiver", networks.single().ssid)
+        assertEquals(36, networks.single().channel)
+        assertEquals(0x4300, Iap2ControlSession.parse(transport.sent.last())!!.first)
+    }
+
+    @Test fun bluetoothPostAuthSendsNotificationsAndAnswersSubscriptions() = runBlocking {
+        val transport = Transport()
+        val wifi = object : WifiHandoff {
+            override fun connectToAccessory(network: WifiHandoff.NetworkInfo) {}
+            override fun tearDown() {}
+        }
+        val session = CarPlaySession(transport, OkcarBypassProvider(), wifi,
+            iphoneBehavior = true, bluetoothNotifications = true,
+            bluetoothIdentifier = { "AA:BB:CC:DD:EE:FF" })
+        session.onControlMessage(0xAA03, Iap2ControlSession.param(0, byteArrayOf(1)))
+        val ids = transport.sent.map { Iap2ControlSession.parse(it)!!.first }
+        assertEquals(0xAA05, ids.first())
+        assertTrue(0x4E0D in ids)
+        assertTrue(0x4E0E in ids)
+        assertEquals(0x5702, ids.last())
+        session.onControlMessage(0x5000, byteArrayOf())
+        session.onControlMessage(0x4154, byteArrayOf())
+        session.onControlMessage(0x4157, byteArrayOf())
+        assertEquals(listOf(0x5001, 0x4155, 0x4158), transport.sent.takeLast(3).map { Iap2ControlSession.parse(it)!!.first })
+    }
+
+    @Test fun transportNotificationsUseOnlyARealIdentifier() {
+        assertNull(IphoneIap2.bluetoothTransportIdentifier(null))
+        assertNull(IphoneIap2.bluetoothTransportIdentifier("02:00:00:00:00:00"))
+        assertNull(IphoneIap2.bluetoothTransportIdentifier("invalid"))
+        val (id, params) = Iap2ControlSession.parse(assertNotNull(IphoneIap2.bluetoothTransportIdentifier("aa:bb:cc:dd:ee:ff")))!!
+        assertEquals(0x4E0E, id)
+        assertEquals("AA:BB:CC:DD:EE:FF\u0000", Iap2ControlSession.firstParamValue(params).decodeToString())
+        val availability = Iap2ControlSession.parse(IphoneIap2.wirelessAvailability())!!
+        assertEquals(0x4E0D, availability.first)
+        assertContentEquals(byteArrayOf(1), Iap2ControlSession.firstParamValue(availability.second))
     }
 
     @Test fun wifiConfigurationAnnouncesWirelessAvailabilityOnce() = runBlocking {
         val transport = Transport()
         var ssid = ""
+        var joins = 0
         val wifi = object : WifiHandoff {
-            override fun connectToAccessory(network: WifiHandoff.NetworkInfo) { ssid = network.ssid }
+            override fun connectToAccessory(network: WifiHandoff.NetworkInfo) { ssid = network.ssid; joins++ }
             override fun tearDown() {}
         }
         val session = CarPlaySession(transport, OkcarBypassProvider(), wifi)
@@ -33,6 +96,7 @@ class ReceiverControlTest {
         session.onControlMessage(0x5703, params)
         session.onControlMessage(0x5703, params)
         assertEquals("Receiver", ssid)
+        assertEquals(1, joins, "duplicate receiver Wi-Fi configurations must not restart a join")
         // Matches Receiver's group 1 / parameter 0 U8 wireless availability codec.
         assertEquals("4040000f4300000900010005000001",
             transport.sent.single().joinToString("") { "%02x".format(it) })

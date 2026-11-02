@@ -101,8 +101,12 @@ class IPhoneAdvertiser(
             .setIncludeDeviceName(false)
             .addManufacturerData(Iap2Constants.APPLE_COMPANY_ID, mfgPayload)
             .build()
+        // A 128-bit UUID takes 18 of the scan response's 31 bytes. The full
+        // adapter name (usually "<phone> - CarDroid") rarely fits in the
+        // remaining 13 bytes including its two-byte field header. Keep the
+        // UUID and leave the full name on the Classic Bluetooth adapter.
         val scanResponse = AdvertiseData.Builder()
-            .setIncludeDeviceName(true)
+            .setIncludeDeviceName(false)
             .addServiceUuid(ParcelUuid(Iap2Constants.SERVICE_UUID_IPHONE))
             .build()
 
@@ -114,7 +118,7 @@ class IPhoneAdvertiser(
             .build()
         fallbackPlan = Triple("mfg-only, no scan response", settings, minimal)
 
-        onLog("BLE advert: mfg=${mfgPayload.size}B + scan-resp(name+UUID)")
+        onLog("BLE advert: mfg=${mfgPayload.size}B + scan-resp(UUID; no name)")
         val cb = callback(false)
         advCallback = cb
         diagnostics.ble(diagnosticToken, ConnectionDiagnostics.Status.STARTING)

@@ -27,7 +27,7 @@ import java.io.ByteArrayOutputStream
  *   0xAA02  Authentication challenge         (iPhone -> accessory; Okcar payload)
  *   0xAA03  Authentication response          (accessory -> iPhone)
  *   0xAA05  AuthenticationSucceeded          (iPhone -> accessory, no params)
- *   0x4E0D  WirelessCarPlayUpdate            (car -> phone)
+ *   0x4E0D  WirelessCarPlayUpdate            (phone -> car)
  *   0x4E0E  DeviceTransportIdentifierNotification
  *   0x5702  RequestAccessoryWiFiConfigurationInformation
  *   0x5703  AccessoryWiFiConfigurationInformation

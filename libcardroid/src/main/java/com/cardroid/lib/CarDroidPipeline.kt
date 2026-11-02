@@ -23,8 +23,11 @@ class CarDroidPipeline private constructor(
     private val log: (String) -> Unit,
     private val diagnostics: ConnectionDiagnostics = ConnectionDiagnostics(),
     private val diagnosticToken: Long = 0,
+    private val bluetoothIdentifier: () -> String? = { null },
 ) {
-    private val carPlay = CarPlaySession(transport, mfi, wifi, diagnostics = diagnostics, diagnosticToken = diagnosticToken)
+    private val carPlay = CarPlaySession(transport, mfi, wifi, iphoneBehavior = advertiser != null,
+        diagnostics = diagnostics, diagnosticToken = diagnosticToken,
+        bluetoothNotifications = advertiser != null, bluetoothIdentifier = bluetoothIdentifier)
     private var airPlay: AirPlayClient? = null
 
     val listening: StateFlow<Boolean>? get() = (transport as? Iap2Transport)?.listening
@@ -94,11 +97,13 @@ class CarDroidPipeline private constructor(
             log: (String) -> Unit = {},
             diagnostics: ConnectionDiagnostics = ConnectionDiagnostics(),
             diagnosticToken: Long = 0,
+            bluetoothIdentifier: () -> String? = { null },
         ): CarDroidPipeline = CarDroidPipeline(
             transport = Iap2Transport(adapter, linkSyncParams, log, diagnostics, diagnosticToken),
             advertiser = IPhoneAdvertiser(adapter, identity, log, diagnostics, diagnosticToken),
             diagnostics = diagnostics,
             diagnosticToken = diagnosticToken,
+            bluetoothIdentifier = bluetoothIdentifier,
             mfi = mfi,
             wifi = wifi,
             log = log,
