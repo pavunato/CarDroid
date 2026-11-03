@@ -2,6 +2,7 @@ package com.cardroid.lib.airplay
 
 import com.cardroid.mfi.MfiAuthProvider
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
@@ -68,6 +69,7 @@ class AirPlayHandshakeOrchestrator(
     private val onDiagnosticStage: (com.cardroid.lib.ConnectionDiagnostics.Stage) -> Unit = {},
 ) {
     private val lifecycleLock = Any() // orders readiness publication with stop/peer EOF
+    private var stopped = false
     private val rtspLock = Any() // serializes control-channel requests (feedback loop + iAP out)
     /** Actor owns responder state; network worker keeps blocking RTSP off the event/timer path. */
     private var iapOutActor: java.util.concurrent.ExecutorService? = null
@@ -339,27 +341,33 @@ class AirPlayHandshakeOrchestrator(
             }
 
             // 7. Periodic /feedback every 2s
-            feedbackJob = scope.launch(Dispatchers.IO) {
-                var feedbackCount = 0
-                while (true) {
-                    delay(2_000)
-                    try {
-                        val fb = synchronized(rtspLock) { rtsp.feedback() }
-                        log("AirPlay: /feedback -> ${fb.statusCode}")
-                        fb.requireSuccess("/feedback")
-                        // The receiver reports each audio stream's render state here; sampleTime
-                        // appears (and advances) only once its audio output is actually consuming.
-                        val feedbackMap = if (fb.body.isNotEmpty()) runCatching { ReceiverPlist.map(fb.body) }.getOrNull() else null
-                        if (feedbackCount++ % 5 == 0 && feedbackMap != null) {
-                            log("AirPlay: /feedback streams=${feedbackMap["streams"].toString().take(400)}")
-                        }
-                    } catch (e: Throwable) {
-                        log("AirPlay: /feedback failed: ${e.message}; ending loop")
-                        break
+            feedbackJob = scope.launch(Dispatchers.IO) { runFeedbackLoop() }
+            return true
+    }
+
+    /** A test can inject a request failure without constructing a complete receiver. */
+    internal suspend fun runFeedbackLoop(intervalMs: Long = 2_000, request: (() -> Unit)? = null) {
+        var feedbackCount = 0
+        while (true) {
+            delay(intervalMs)
+            try {
+                if (request != null) request() else {
+                    val fb = synchronized(rtspLock) { rtsp.feedback() }
+                    log("AirPlay: /feedback -> ${fb.statusCode}")
+                    fb.requireSuccess("/feedback")
+                    val feedbackMap = if (fb.body.isNotEmpty()) runCatching { ReceiverPlist.map(fb.body) }.getOrNull() else null
+                    if (feedbackCount++ % 5 == 0 && feedbackMap != null) {
+                        log("AirPlay: /feedback streams=${feedbackMap["streams"].toString().take(400)}")
                     }
                 }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                log("AirPlay: /feedback failed: ${e.javaClass.simpleName}; ending session")
+                endPeerSession("AirPlay feedback failed")
+                return
             }
-            return true
+        }
     }
 
     private fun startMedia(shared: ByteArray, initial: AirPlayRtspClient.Response,
@@ -445,13 +453,7 @@ class AirPlayHandshakeOrchestrator(
             mediaTransport = transport
             val eventPort = (ReceiverPlist.map(initial.body)["eventPort"] as? Number)?.toInt()
                 ?.also { require(it in 1..65535) } ?: error("Missing receiver event port")
-            transport.onPeerEnded = { reason ->
-                synchronized(lifecycleLock) {
-                    hasWifiSession = false
-                    stop()
-                    onPeerEnded?.invoke(reason)
-                }
-            }
+            transport.onPeerEnded = ::endPeerSession
             setupIapOut(transport)
             val screenLifecycle = ScreenStreamLifecycle(
                 suspendVideo = { transport.suspendVideo() },
@@ -744,7 +746,14 @@ class AirPlayHandshakeOrchestrator(
         iapOutNetwork?.shutdownNow(); iapOutNetwork = null
     }
 
+    private fun endPeerSession(reason: String) = synchronized(lifecycleLock) {
+        if (stopped) return@synchronized
+        stop()
+        onPeerEnded?.invoke(reason)
+    }
+
     fun stop() = synchronized(lifecycleLock) {
+        stopped = true
         hasWifiSession = false
         stopIapOut()
         stopResourceModes()

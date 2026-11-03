@@ -38,6 +38,7 @@ data class Iap2Frame(
     fun encode(): ByteArray {
         val hasPayload = payload.isNotEmpty()
         val length = if (hasPayload) 10 + payload.size else 9
+        require(length <= MAX_FRAME_LENGTH) { "iAP2 frame exceeds 16-bit length" }
         val totalWireSize = if (hasPayload) 9 + payload.size + 1 else 9
         val out = ByteArray(totalWireSize)
 
@@ -65,6 +66,7 @@ data class Iap2Frame(
     }
 
     companion object {
+        const val MAX_FRAME_LENGTH = 0xFFFF
         /** Read exactly one frame from [stream], blocking until complete or EOF. */
         fun readFrom(stream: InputStream): Iap2Frame? = readFrom(stream, onSkip = null, onRawWire = null)
 
@@ -116,7 +118,7 @@ data class Iap2Frame(
             val ack = hdr[6]
             val session = hdr[7]
 
-            if (length < 9 || length > 8192) {
+            if (length < 9 || length > MAX_FRAME_LENGTH) {
                 onRawWire?.invoke(hdr)
                 return null
             }

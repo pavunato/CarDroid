@@ -84,6 +84,8 @@ internal class Iap2ReceiveSequence {
     private var accepted: Int? = null
     val lastAccepted: Byte? get() = accepted?.toByte()
     enum class Result { ACCEPTED, DUPLICATE, OUT_OF_ORDER }
+    /** The peer's SYN is the initial sequenced packet, including across wraparound. */
+    fun initialize(synSeq: Byte) { accepted = synSeq.toInt() and 0xff }
     fun missingBefore(seq: Byte): ByteArray {
         val last = accepted ?: return byteArrayOf()
         val distance = ((seq.toInt() and 0xff) - last) and 0xff

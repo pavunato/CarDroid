@@ -156,6 +156,13 @@ class ConnectionDiagnosticsTest {
         d.ended(token, "handshake failed: SocketTimeoutException")
         assertEquals("SESSION_CLOSED_LOCALLY", d.state.value.lastError)
     }
+    @Test fun feedbackFailureClearsMediaReadiness() {
+        val d = ConnectionDiagnostics(); val token = d.begin()
+        d.reached(token, ConnectionDiagnostics.Stage.MEDIA)
+        d.ended(token, "AirPlay feedback failed")
+        assertEquals("AIRPLAY_FAILED", d.state.value.lastError)
+        assertFalse(ConnectionDiagnostics.Stage.MEDIA in d.state.value.evidence)
+    }
     @Test fun sessionEndKeepsMostSpecificPriorReason() {
         val d = ConnectionDiagnostics(); val token = d.begin()
         d.reached(token, ConnectionDiagnostics.Stage.SOCKET)

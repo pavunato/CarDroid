@@ -175,6 +175,7 @@ class Iap2Transport(
     private suspend fun handleSession() = withContext(Dispatchers.IO) {
         val out = output ?: return@withContext
         val inp = input ?: return@withContext
+        val controlStream = Iap2ControlStream()
 
         val sessionSocket = socket
         val timer = CoroutineScope(currentCoroutineContext()).launch {
@@ -332,6 +333,7 @@ class Iap2Transport(
                     }
                     synchronized(linkLock) {
                         lastAck = frame.seq
+                        if (!waitingForPeerAckAfterSyn) receiveSequence.initialize(frame.seq)
                         if (sendWindow == null) configureSendWindow(peerLsp ?: linkSyncParams)
                     }
 
@@ -374,7 +376,7 @@ class Iap2Transport(
                     }
                     if (result == Iap2ReceiveSequence.Result.ACCEPTED &&
                         (frame.session == Iap2Constants.CONTROL_SESSION_ID || frame.session == negotiatedControlSession)) {
-                        handleControlPayload(frame.payload, frame.seq)
+                        for (message in controlStream.feed(frame.payload)) handleControlPayload(message, frame.seq)
                     } else if (result != Iap2ReceiveSequence.Result.ACCEPTED) {
                         diagnostics.linkEvent(diagnosticToken, if (result == Iap2ReceiveSequence.Result.DUPLICATE)
                             ConnectionDiagnostics.LinkEvent.DUPLICATE_DATA else ConnectionDiagnostics.LinkEvent.OUT_OF_ORDER_DATA)

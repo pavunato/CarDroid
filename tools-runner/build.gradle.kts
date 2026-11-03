@@ -20,8 +20,8 @@ dependencies {
 
 // Pull cardroid's pure-Kotlin protocol files in directly so we run the SAME
 // implementation as the Android app. We exclude the Android-only transports
-// (Iap2Transport, IPhoneAdvertiser, CarDroidPipeline) which depend on
-// BluetoothAdapter.
+// (IPhoneAdvertiser and CarDroidPipeline) which depend on Android APIs.
+// Iap2Transport uses JVM Bluetooth stubs for stream-level regression tests.
 sourceSets {
     main {
         kotlin {
@@ -34,7 +34,6 @@ sourceSets {
 // Drop only the files that pull in Android-specific transports/USB; we stub
 // android.util.Log so files that only Log-log can compile unchanged.
 tasks.named<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>("compileKotlin") {
-    exclude("**/Iap2Transport.kt")        // android.bluetooth.*
     exclude("**/IPhoneAdvertiser.kt")     // android.bluetooth.le.*
     exclude("**/CarDroidPipeline.kt")     // BluetoothAdapter parameter
     exclude("**/ExternalChipProvider.kt") // android.hardware.usb

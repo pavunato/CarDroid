@@ -12,12 +12,12 @@ import kotlinx.coroutines.flow.StateFlow
  *
  * reference-aligned wireless client-mode flow:
  *   1. Detect / LinkSync  (handled by [Iap2Transport])
- *   2. Request MFi cert (0xAA00), receive cert (0xAA01)
- *   3. Send OkCar-extracted hardcoded MFi auth payload (0xAA02)
- *   4. Car sends auth response (0xAA03)
- *   5. We send AuthenticationSucceeded (0xAA05, no params)
- *   6. StartIdentification (0x1D00), receive IdentificationInformation
+ *   2. StartIdentification (0x1D00), receive IdentificationInformation
  *      (0x1D01), accept (0x1D02)
+ *   3. Request MFi cert (0xAA00), receive cert (0xAA01)
+ *   4. Send OkCar-extracted hardcoded MFi auth payload (0xAA02)
+ *   5. Car sends auth response (0xAA03)
+ *   6. We send AuthenticationSucceeded (0xAA05, no params)
  *   7. Request AccessoryWiFiConfigurationInformation (0x5702)
  */
 class CarPlaySession(

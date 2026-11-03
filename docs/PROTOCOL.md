@@ -86,12 +86,12 @@ Defaults in `LinkSyncParameters` (replace with capture values):
 | cumulativeAckTimeoutMs | 1000 | reference wireless client-mode extractor |
 | maxRetransmits | 30 | reference wireless client-mode extractor |
 | maxCumulativeAcks | 1 | reference wireless client-mode extractor |
-| Sessions | control/auth session 0 on the packet header; current LSP still advertises type-0/type-2 descriptors for compatibility | reference + captures |
+| Sessions | outbound control uses the peer-negotiated type-0 session ID; link SYN and bare ACK use session 0 | current Bluetooth implementation |
 
 ## Control session (TLV) — public
 
-Wraps inside frames addressed to session id 0 for the current reference-aligned
-test. CarDroid also accepts the peer-advertised type-0 LSP session inbound.
+Control messages use the peer-advertised type-0 session ID outbound. Inbound
+Bluetooth control accepts that session ID or the implementation's default ID.
 
 ```
 off  bytes  field
@@ -124,9 +124,17 @@ off  bytes  field
 | `0xAE00` | accessory → iPhone | StartPowerUpdates |
 | `0xAE01` | iPhone → accessory | PowerUpdate |
 
-## MFi authentication — public protocol, hardware-gated
+## MFi authentication — trust limitation
 
-Auth proceeds as:
+The sequence below describes the intended verifier role, **not verification
+performed by the current app**. CarDroid's Okcar-based provider selects a fixed
+challenge and sends authentication success when a response arrives; it does
+not validate the receiver certificate chain or the response signature. Its
+current MFi-SAP implementation also does not verify the receiver certificate
+and signature. These behaviors do not establish receiver authenticity or MFi
+compliance and are compatibility and security limitations.
+
+The verifier-side exchange is typically represented as:
 
 ```
 1. iPhone     ->  head unit: request MFi certificate (0xAA00)
@@ -142,9 +150,9 @@ Auth proceeds as:
 8. iPhone     ->  head unit: AuthenticationSucceeded (0xAA05)
 ```
 
-`Kpriv` is a per-chip RSA-2048 private key burned into the secure element
-at Apple's fab. It cannot be read out. It can only be exercised via the
-chip's I²C register interface. This is why a physical chip is required.
+In a hardware-backed accessory, the private key stays inside the authentication
+coprocessor and signing is performed through its interface. CarDroid's current
+phone-side verifier bypass does not perform the verification shown above.
 
 ## CarPlay nav metadata — out of scope today
 

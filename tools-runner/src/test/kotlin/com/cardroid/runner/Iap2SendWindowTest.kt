@@ -53,6 +53,18 @@ class Iap2SendWindowTest {
         assertEquals(Iap2ReceiveSequence.Result.DUPLICATE, receive.accept(255.toByte()))
         assertEquals(Iap2ReceiveSequence.Result.ACCEPTED, receive.accept(0))
     }
+    @Test fun synBaselineRejectsMissingFirstDataAndSupportsWrap() {
+        val receive = Iap2ReceiveSequence()
+        receive.initialize(1)
+        assertEquals(Iap2ReceiveSequence.Result.OUT_OF_ORDER, receive.accept(3))
+        assertContentEquals(byteArrayOf(2), receive.missingBefore(3))
+        assertEquals(1, receive.lastAccepted?.toInt())
+        assertEquals(Iap2ReceiveSequence.Result.ACCEPTED, receive.accept(2))
+        assertEquals(Iap2ReceiveSequence.Result.ACCEPTED, receive.accept(3))
+        val wrap = Iap2ReceiveSequence()
+        wrap.initialize(255.toByte())
+        assertEquals(Iap2ReceiveSequence.Result.ACCEPTED, wrap.accept(0))
+    }
     @Test fun extendedAckRetransmitsOnlyRequestedOutstandingFrames() {
         val h = Harness(5, retries = 1)
         repeat(3) { h.link.enqueue(byteArrayOf(it.toByte()), 0) }

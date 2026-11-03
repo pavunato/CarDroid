@@ -182,6 +182,7 @@ class ConnectionDiagnostics(
     private fun endReason(reason: String?): String = when {
         reason == null -> "SESSION_ENDED"
         reason == "RFCOMM closed" || reason.startsWith("event channel ended") -> "SESSION_ENDED"
+        reason == "AirPlay feedback failed" -> "AIRPLAY_FAILED"
         reason.startsWith("handshake failed") -> "SESSION_CLOSED_LOCALLY"
         reason.startsWith("video send failed") -> "VIDEO_SEND_FAILED"
         else -> safeReason(reason) ?: "SESSION_ENDED"
