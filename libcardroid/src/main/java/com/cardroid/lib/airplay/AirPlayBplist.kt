@@ -39,25 +39,43 @@ object AirPlayBplist {
     fun bool(v: Boolean): BoolV = BoolV(v)
     fun array(vararg vs: Value): ArrayV = ArrayV(vs.toList())
 
+    /**
+     * Shared like an iPhone's encoder: numbers, booleans and short strings (Apple's tagged-pointer
+     * strings, at most [SHARED_STRING_MAX] chars) are written once and referenced again; longer
+     * strings are written at every use and containers are never shared. Measured from a real
+     * iPhone's 287 B `modesChanged` (DiPlay trace): `entity` once, `appStateID` x3,
+     * `resourceID`/`permanentEntity` x2; that rule reproduces its size byte-for-byte.
+     */
+    private fun shared(v: Value): Boolean = when (v) {
+        is IntV, is BoolV -> true
+        is StringV -> v.s.length <= SHARED_STRING_MAX && v.s.all { it.code < 128 }
+        else -> false
+    }
+
+    const val SHARED_STRING_MAX = 9
+
+    private class Node(val value: Value, val children: IntArray)
+
     fun encode(root: Value): ByteArray {
-        // Walk the tree, collect every distinct object in a stable order.
-        val objects = mutableListOf<Value>()
-        val refOf = LinkedHashMap<Value, Int>()
+        // Walk the tree in iPhone order: container, its keys, then its values (depth first).
+        val objects = mutableListOf<Node?>()
+        val sharedRef = HashMap<Value, Int>()
         fun visit(v: Value): Int {
-            refOf[v]?.let { return it }
+            if (shared(v)) sharedRef[v]?.let { return it }
             val idx = objects.size
-            objects.add(v)
-            refOf[v] = idx
-            when (v) {
+            objects.add(null)
+            if (shared(v)) sharedRef[v] = idx
+            val children = when (v) {
+                // dict has key refs then value refs; key strings are objects too.
                 is DictV -> {
-                    // dict has interleaved key refs then value refs. Strings
-                    // for keys must be objects too.
-                    for ((k, _) in v.m) visit(StringV(k))
-                    for ((_, vv) in v.m) visit(vv)
+                    val keys = v.m.keys.map { visit(StringV(it)) }
+                    val values = v.m.values.map { visit(it) }
+                    (keys + values).toIntArray()
                 }
-                is ArrayV -> { for (item in v.list) visit(item) }
-                else -> {}
+                is ArrayV -> v.list.map { visit(it) }.toIntArray()
+                else -> IntArray(0)
             }
+            objects[idx] = Node(v, children)
             return idx
         }
         visit(root)
@@ -67,9 +85,9 @@ object AirPlayBplist {
         body.write("bplist00".toByteArray(Charsets.US_ASCII))
 
         val offsets = IntArray(objects.size)
-        for ((i, obj) in objects.withIndex()) {
+        for ((i, node) in objects.withIndex()) {
             offsets[i] = body.size()
-            writeObject(body, obj, refOf, refSize)
+            writeObject(body, node!!, refSize)
         }
 
         val offsetTableOffset = body.size().toLong()
@@ -86,8 +104,8 @@ object AirPlayBplist {
         return body.toByteArray()
     }
 
-    private fun writeObject(out: ByteArrayOutputStream, v: Value, refs: Map<Value, Int>, refSize: Int) {
-        when (v) {
+    private fun writeObject(out: ByteArrayOutputStream, node: Node, refSize: Int) {
+        when (val v = node.value) {
             is StringV -> {
                 val bytes = v.s.toByteArray(Charsets.US_ASCII)
                 // If the string is pure ASCII, use 0x5_ (ASCII string).
@@ -106,11 +124,12 @@ object AirPlayBplist {
                 val n = v.v
                 // Choose width: 1, 2, 4, or 8 bytes (signed conceptually, but
                 // bplist encodes unsigned for 1/2/4 and signed for 8).
+                // 1/2/4-byte bplist ints are unsigned (an iPhone writes port 64728 as 0x11 FCD8).
                 val width = when {
                     n < 0L -> 8 // two's-complement signed bplist integer
-                    n in -128..127 -> 1
-                    n in -32768..32767 -> 2
-                    n in Int.MIN_VALUE.toLong()..Int.MAX_VALUE.toLong() -> 4
+                    n <= 0xFFL -> 1
+                    n <= 0xFFFFL -> 2
+                    n <= 0xFFFF_FFFFL -> 4
                     else -> 8
                 }
                 val log2 = when (width) { 1 -> 0; 2 -> 1; 4 -> 2; else -> 3 }
@@ -123,12 +142,11 @@ object AirPlayBplist {
             }
             is DictV -> {
                 writeLengthPrefix(out, 0xD0, v.m.size)
-                for ((k, _) in v.m) writeUIntBE(out, refs.getValue(StringV(k)).toLong(), refSize)
-                for ((_, vv) in v.m) writeUIntBE(out, refs.getValue(vv).toLong(), refSize)
+                for (ref in node.children) writeUIntBE(out, ref.toLong(), refSize)
             }
             is ArrayV -> {
                 writeLengthPrefix(out, 0xA0, v.list.size)
-                for (item in v.list) writeUIntBE(out, refs.getValue(item).toLong(), refSize)
+                for (ref in node.children) writeUIntBE(out, ref.toLong(), refSize)
             }
         }
     }

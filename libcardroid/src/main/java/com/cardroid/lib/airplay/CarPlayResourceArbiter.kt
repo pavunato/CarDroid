@@ -237,12 +237,13 @@ class CarPlayResourceArbiter(
         AirPlayBplist.dict(
             "type" to AirPlayBplist.str("modesChanged"),
             "params" to AirPlayBplist.dict(
+                // Order as a real iPhone sends it (DiPlay trace): appStates 2,1,3; resources 2,1.
                 "appStates" to AirPlayBplist.array(
                     appStateValue(snapshot, APP_STATE_PHONE_CALL),
-                    appStateValue(snapshot, APP_STATE_TURN_BY_TURN),
                     appStateValue(snapshot, APP_STATE_SPEECH),
+                    appStateValue(snapshot, APP_STATE_TURN_BY_TURN),
                 ),
-                "resources" to AirPlayBplist.ArrayV(snapshot.resources.map {
+                "resources" to AirPlayBplist.ArrayV(snapshot.resources.sortedByDescending { it.id }.map {
                     AirPlayBplist.dict(
                         "resourceID" to AirPlayBplist.int(it.id),
                         "entity" to AirPlayBplist.int(it.entity),
@@ -255,20 +256,21 @@ class CarPlayResourceArbiter(
     private fun appStateValue(snapshot: Snapshot, id: Int): AirPlayBplist.Value {
         val state = snapshot.appStates.first { it.id == id }
         return if (id == APP_STATE_SPEECH) {
+            // Key order as a real iPhone: entity, speechMode, appStateID.
             AirPlayBplist.dict(
-                "appStateID" to AirPlayBplist.int(id),
                 // modesChanged reports the current owner.  A speech mode of
                 // -1 means neither side is speaking; an active request is an
                 // accessory-owned app state (entity 2).
                 "entity" to AirPlayBplist.int(if (state.speechMode == SPEECH_NONE) ENTITY_NONE else ENTITY_ACCESSORY),
                 "speechMode" to AirPlayBplist.int(state.speechMode ?: SPEECH_NONE),
+                "appStateID" to AirPlayBplist.int(id),
             )
         } else {
             AirPlayBplist.dict(
-                "appStateID" to AirPlayBplist.int(id),
                 // `state` is the accessory's request form; the response uses
                 // the simplified owner form used by modesChanged.
                 "entity" to AirPlayBplist.int(if (state.state == true) ENTITY_ACCESSORY else ENTITY_NONE),
+                "appStateID" to AirPlayBplist.int(id),
             )
         }
     }

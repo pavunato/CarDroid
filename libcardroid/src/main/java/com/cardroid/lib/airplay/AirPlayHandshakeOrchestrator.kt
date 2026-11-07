@@ -450,8 +450,10 @@ class AirPlayHandshakeOrchestrator(
         setup = {
             check(mediaTransport === transport) { "Media session ended before audio SETUP" }
             val audioId = java.security.SecureRandom().nextLong() and Long.MAX_VALUE
+            // Main audio is already phone-owned since tunnel ready; a real iPhone sends no
+            // modesChanged at playback. Re-announce only if the car took it back meanwhile.
             val result = resourceArbiter.controllerTake(CarPlayResourceArbiter.RESOURCE_AUDIO, "phone starts media")
-            sendModes(result.snapshot, "audio take")
+            if (result.changed) sendModes(result.snapshot, "audio take")
             val socket = udpSocketFactory()
             try {
                 val reply = synchronized(rtspLock) { setupStreams(listOf(iphoneAudioStream(profile, audioId, socket.localPort))) }
@@ -680,6 +682,9 @@ class AirPlayHandshakeOrchestrator(
         if (iapOutGeneration.get() != generation || postAuthModesFuture != null) return
         val ticker = iapOutTicker ?: return
         val network = iapOutNetwork ?: return
+        // A real iPhone takes main audio here, as soon as the tunnel is ready (DiPlay trace cseq 14:
+        // resources 2 and 1 both entity/permanentEntity 1), long before any playback starts.
+        resourceArbiter.controllerTake(CarPlayResourceArbiter.RESOURCE_AUDIO, "tunnel ready (iPhone takes main audio)")
         val resourceToken = resourceArbiter.reassertToken()
         postAuthModesFuture = runCatching {
             ticker.schedule({
@@ -708,7 +713,7 @@ class AirPlayHandshakeOrchestrator(
                         }
                     }
                 }
-            }, 1_000L, java.util.concurrent.TimeUnit.MILLISECONDS)
+            }, 0L, java.util.concurrent.TimeUnit.MILLISECONDS)
         }.onFailure {
             log("AirPlay: post-auth modesChanged schedule failed: ${it.javaClass.simpleName}: ${it.message}")
         }.getOrNull()
@@ -800,17 +805,22 @@ class AirPlayHandshakeOrchestrator(
         /** Real iPhone screen latency (Receiver capture, iOS 26.7.1). */
         const val IPHONE_VIDEO_LATENCY_MS = 75L
 
+        /** A real iPhone declares 1000 ms for buffered media audio even when /info lists 100 ms. */
+        const val IPHONE_MEDIA_AUDIO_LATENCY_MS = 1000L
+
         /** Audio stream description exactly as a real iPhone sends it; [controlPort] is our RTCP/UDP port. */
         fun iphoneAudioStream(profile: AudioProfile, streamConnectionId: Long, controlPort: Int): AirPlayBplist.Value =
+            // Key order and values as a real iPhone's media SETUP (DiPlay trace, 234 B).
             AirPlayBplist.dict(
-                "type" to AirPlayBplist.int(profile.streamType),
+                "audioLatencyMs" to AirPlayBplist.int(
+                    if (profile.audioType == "media") IPHONE_MEDIA_AUDIO_LATENCY_MS else profile.latencyMs.toLong()),
                 "streamConnectionID" to AirPlayBplist.int(streamConnectionId),
-                "audioType" to AirPlayBplist.str(profile.audioType),
-                "audioFormat" to AirPlayBplist.int(profile.formatBit),
                 "spf" to AirPlayBplist.int(profile.samplesPerPacket),
-                "audioLatencyMs" to AirPlayBplist.int(profile.latencyMs),
                 "controlPort" to AirPlayBplist.int(controlPort),
+                "type" to AirPlayBplist.int(profile.streamType),
+                "audioFormat" to AirPlayBplist.int(profile.formatBit),
                 "supportsHighAccuracyTimestamps" to AirPlayBplist.bool(true),
+                "audioType" to AirPlayBplist.str(profile.audioType),
             )
 
 

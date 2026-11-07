@@ -30,11 +30,15 @@ class AirPlaySessionSetupTest {
         val m = decode(params())
         listOf("deviceID", "macAddress", "model", "name", "osBuildVersion", "osName", "osVersion",
             "sessionCorrelationUUID", "sessionUUID", "sourceVersion").forEach { assertTrue(m[it] is String, it) }
-        assertEquals(listOf("iAPChannel"), m["features"])
+        assertEquals(AirPlaySessionSetup.FEATURES, m["features"])
+        assertEquals(16, (m["features"] as List<*>).size)
         assertEquals(54321, (m["timingPort"] as Number).toInt())
         assertEquals(true, m["keepAliveLowPower"])
-        assertEquals(false, m["statsCollectionEnabled"])
-        assertTrue(m["updateSessionRequest"] is Map<*, *>)
+        assertEquals(true, m["statsCollectionEnabled"])
+        assertEquals(false, m["updateSessionRequest"])
+        assertEquals("23H30", m["osBuildVersion"])
+        val uuid = m["sessionUUID"] as String
+        assertEquals(uuid.uppercase(), uuid)
     }
 
     @Test fun identityIsConsistentModernAndCorrelationIsFresh() {

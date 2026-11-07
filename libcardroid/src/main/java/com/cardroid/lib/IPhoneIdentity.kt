@@ -15,7 +15,7 @@ data class IPhoneIdentity(
     /** Friendly device name. */
     val name: String = DEVICE_NAME,
     /** iOS-like firmware version. */
-    val firmwareVersion: String = "23H222",
+    val firmwareVersion: String = "23H30",
     /** Serial number. */
     val serial: String = "F2LL2DEFGHIJ",
     /** Hardware revision. */

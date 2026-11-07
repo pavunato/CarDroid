@@ -19,8 +19,8 @@ data class AirPlayParams(
     var sessionUuid: String,
     /** OkcarOS `f61m`: path segment used in RTSP session URLs. */
     var rtspSessionId: String = "7267369879794370004",
-    /** OkcarOS `f53e`: random UUID sent in SETUP plist as `sessionUUID`. */
-    var setupSessionUuid: String = UUID.randomUUID().toString(),
+    /** OkcarOS `f53e`: random UUID sent in SETUP plist as `sessionUUID` (uppercase, as a real iPhone). */
+    var setupSessionUuid: String = UUID.randomUUID().toString().uppercase(),
     /** AirPlay DACP sender id used by authorized RTSP requests. */
     var dacpId: String = randomHex64(),
     /** AirPlay remote-control token used by authorized RTSP requests. */
@@ -50,7 +50,7 @@ data class AirPlayParams(
     /** Fresh per-session correlation UUID sent in SETUP as `sessionCorrelationUUID`. */
     var sessionCorrelationUuid: String = UUID.randomUUID().toString().uppercase(),
     /** Pretend iOS build version used in SETUP. */
-    var osBuildVersion: String = "23H222",
+    var osBuildVersion: String = "23H30",
     /** AirPlay source version sent in SETUP / RTSP headers. */
     var sourceVersion: String = "960.13.1",
 )
