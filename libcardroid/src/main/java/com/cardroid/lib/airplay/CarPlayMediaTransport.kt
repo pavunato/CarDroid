@@ -32,16 +32,23 @@ class CarPlayMediaOptions(
 /** Owns the negotiated encrypted media sockets; capture is supplied by Android. */
 class CarPlayMediaTransport(
     video: Socket,
-    private val audio: DatagramSocket?,
-    private val audioTarget: InetSocketAddress?,
+    audio: DatagramSocket?,
+    audioTarget: InetSocketAddress?,
     videoKey: ByteArray,
-    private val audioKey: ByteArray,
+    audioKey: ByteArray,
     private val log: (String) -> Unit,
     val width: Int, val height: Int, val receiverWidth: Int, val receiverHeight: Int,
     val fps: Int = 30,
     val audioProfile: AudioProfile = AudioProfile.DEFAULT,
-    private val audioControlTarget: InetSocketAddress? = null,
+    audioControlTarget: InetSocketAddress? = null,
 ) : Closeable {
+    // Late-bound: the type-102 stream exists only while media plays (attachAudio/detachAudio).
+    @Volatile private var audio: DatagramSocket? = audio
+    @Volatile private var audioTarget: InetSocketAddress? = audioTarget
+    @Volatile private var audioKey: ByteArray = audioKey
+    @Volatile private var audioControlTarget: InetSocketAddress? = audioControlTarget
+    /** Set by the orchestrator; null when the session has no audio. */
+    @Volatile var audioLifecycle: AudioStreamLifecycle? = null
     /** Fired once for a fatal video/event failure, after cleanup (never on local close()). */
     @Volatile var onPeerEnded: ((String) -> Unit)? = null
     @Volatile var onCommand: ((Map<String,Any?>) -> Unit)? = null
@@ -240,13 +247,40 @@ class CarPlayMediaTransport(
         sendAudioPayload(aacAccessUnit, sampleFrames, pcmLittleEndian = false)
     }
 
+    /** Playback started: SETUP type 102 once (no-op while already set up). False when unavailable. */
+    fun ensureAudioStream(): Boolean = audioLifecycle?.ensure() ?: false
+
+    /** Playback silent for a sustained period: TEARDOWN type 102 (no-op when not set up). */
+    fun releaseAudioStream() { audioLifecycle?.release() }
+
+    /** Bind a freshly SETUP type-102 stream; sequence/timestamp/encryption counters restart. */
+    fun attachAudio(socket: DatagramSocket, target: InetSocketAddress, key: ByteArray, controlTarget: InetSocketAddress?) {
+        check(!closed.get()) { "Media session closed" }
+        audioCounter = 0L; sequence = 0; sample = 0L; firstAudioPacket = true
+        lastAudioTimestamp = 0L; firstSync = true; syncSequence = 0
+        aStart = 0L; aPackets = 0; aMaxSend = 0
+        audioKey = key; audioTarget = target; audioControlTarget = controlTarget
+        audio = socket
+    }
+
+    /** Stop sending audio and release its sockets (call before the TEARDOWN request). */
+    fun detachAudio() {
+        val socket = audio
+        audio = null; audioTarget = null; audioControlTarget = null
+        syncThread?.interrupt(); syncThread = null
+        runCatching { syncSocket?.close() }; syncSocket = null
+        syncStarted.set(false)
+        runCatching { socket?.close() }
+    }
+
     private fun sendAudioPayload(payload: ByteArray, sampleFrames: Int, pcmLittleEndian: Boolean) {
         val socket = audio ?: return
         val target = audioTarget ?: return
+        val key = audioKey
         require(sampleFrames > 0)
         val timestamp = sample
         val packet = CarPlayMediaWire.audioPacket(
-            audioKey,
+            key,
             audioCounter++,
             sequence++,
             timestamp.toInt(),

@@ -373,7 +373,6 @@ class AirPlayHandshakeOrchestrator(
     private fun startMedia(shared: ByteArray, initial: AirPlayRtspClient.Response,
                            options: CarPlayMediaOptions, hidRegistry: HidDeviceRegistry?) {
         val videoId = java.security.SecureRandom().nextLong() and Long.MAX_VALUE
-        val audioId = java.security.SecureRandom().nextLong() and Long.MAX_VALUE
         val audioProfile = options.audioProfile
         // Real iPhone video entry (Receiver capture): no width/height/fps; the car display is named by uuid.
         val videoStream = iphoneVideoStream(videoId, options.displayUuid)
@@ -412,45 +411,23 @@ class AirPlayHandshakeOrchestrator(
         response.requireSuccess("video SETUP")
         diagCapture("media-setup-resp", response.body, CarDiagSummary.summarizeMediaSetupResponse(response.body)) // car-touch-iap2-tunnel
         val videoReplies = ReceiverPlist.map(response.body)["streams"] as? List<*> ?: error("No video SETUP streams")
-        // Real iPhone (Receiver capture, iOS 26.7.1): audio gets its own SETUP after the screen, carrying only
-        // Preserve the negotiated audio latency rather than forcing the captured iPhone value.
-        var earlyAudioSocket: java.net.DatagramSocket? = null
+        // Real iPhone (Receiver capture): no audio stream at startup.  The type-102 SETUP is sent
+        // only when media playback begins (see AudioStreamLifecycle) and torn down after silence.
         var video: java.net.Socket? = null
-        var audio: java.net.DatagramSocket? = null
         try {
-            val replies = if (options.audio) {
-                val result = resourceArbiter.controllerTake(CarPlayResourceArbiter.RESOURCE_AUDIO, "phone starts media")
-                sendModes(result.snapshot, "audio take")
-                val socket = udpSocketFactory().also { earlyAudioSocket = it }
-                val audioStream = iphoneAudioStream(audioProfile, audioId, socket.localPort)
-                val audioResponse = runCatching { setupStreams(listOf(audioStream)) }
-                    .onFailure { socket.close() }.getOrThrow()
-                audioResponse.requireSuccess("audio SETUP")
-                log("AirPlay: iPhone-style audio SETUP accepted controlPort(ours)=${socket.localPort} latency=${audioProfile.latencyMs}ms")
-                videoReplies + (ReceiverPlist.map(audioResponse.body)["streams"] as? List<*> ?: error("No audio SETUP streams"))
-            } else videoReplies
             fun port(type: Int): Int {
-                val stream = replies.filterIsInstance<Map<*,*>>().firstOrNull { (it["type"] as? Number)?.toInt() == type }
+                val stream = videoReplies.filterIsInstance<Map<*,*>>().firstOrNull { (it["type"] as? Number)?.toInt() == type }
                     ?: error("Receiver rejected media type $type")
                 return (stream["dataPort"] as? Number)?.toInt()?.also { require(it in 1..65535) } ?: error("Missing media data port")
             }
             val videoPort = port(110)
-            val audioPort = if (options.audio) port(audioProfile.streamType) else 0
-            val audioControlPort = if (options.audio) {
-                replies.filterIsInstance<Map<*, *>>()
-                    .firstOrNull { (it["type"] as? Number)?.toInt() == audioProfile.streamType }
-                    ?.let { (it["controlPort"] as? Number)?.toInt() ?: 0 }
-                    ?.takeIf { it in 1..65535 } ?: 0
-            } else 0
             val connectedVideo = connectMediaSocket(videoPort).also { video = it }
-            audio = if (options.audio) earlyAudioSocket ?: udpSocketFactory() else null
-            val host = rtsp.connectedAddress ?: error("RTSP is disconnected")
-            val transport = CarPlayMediaTransport(connectedVideo,audio,if (audioPort > 0) java.net.InetSocketAddress(host,audioPort) else null,
-                CarPlayMediaWire.streamKey(shared,videoId),CarPlayMediaWire.streamKey(shared,audioId),log,
+            val transport = CarPlayMediaTransport(connectedVideo,null,null,
+                CarPlayMediaWire.streamKey(shared,videoId),ByteArray(0),log,
                 options.width,options.height,options.receiverWidth,options.receiverHeight,options.fps,
-                audioProfile,
-                if (audioControlPort > 0) java.net.InetSocketAddress(host,audioControlPort) else null)
+                audioProfile)
             mediaTransport = transport
+            if (options.audio) transport.audioLifecycle = audioStreamLifecycle(transport, shared, audioProfile, ::setupStreams)
             val eventPort = (ReceiverPlist.map(initial.body)["eventPort"] as? Number)?.toInt()
                 ?.also { require(it in 1..65535) } ?: error("Missing receiver event port")
             transport.onPeerEnded = ::endPeerSession
@@ -489,9 +466,48 @@ class AirPlayHandshakeOrchestrator(
             // Ownership transfers only after startEvents succeeds; both paths close on failure.
             transport.startEvents(events, shared, hidRegistry)
             pendingEventSocket = null
-            log("AirPlay: media SETUP accepted videoPort=$videoPort audioPort=$audioPort audioControlPort=$audioControlPort eventPort=$eventPort profile=${audioProfile.label}")
-        } catch (e: Exception) { video?.close(); audio?.close(); earlyAudioSocket?.close(); throw e }
+            log("AirPlay: media SETUP accepted videoPort=$videoPort eventPort=$eventPort profile=${audioProfile.label}")
+        } catch (e: Exception) { video?.close(); throw e }
     }
+
+    /**
+     * On-demand type-102 stream: SETUP when playback starts, TEARDOWN {type:102} after sustained
+     * silence (both observed on a real iPhone).  Runs on the capture thread, serialized on [rtspLock].
+     */
+    private fun audioStreamLifecycle(
+        transport: CarPlayMediaTransport, shared: ByteArray, profile: AudioProfile,
+        setupStreams: (List<AirPlayBplist.Value>) -> AirPlayRtspClient.Response,
+    ) = AudioStreamLifecycle(
+        setup = {
+            check(mediaTransport === transport) { "Media session ended before audio SETUP" }
+            val audioId = java.security.SecureRandom().nextLong() and Long.MAX_VALUE
+            val result = resourceArbiter.controllerTake(CarPlayResourceArbiter.RESOURCE_AUDIO, "phone starts media")
+            sendModes(result.snapshot, "audio take")
+            val socket = udpSocketFactory()
+            try {
+                val reply = synchronized(rtspLock) { setupStreams(listOf(iphoneAudioStream(profile, audioId, socket.localPort))) }
+                reply.requireSuccess("audio SETUP")
+                val stream = (ReceiverPlist.map(reply.body)["streams"] as? List<*> ?: error("No audio SETUP streams"))
+                    .filterIsInstance<Map<*, *>>().firstOrNull { (it["type"] as? Number)?.toInt() == profile.streamType }
+                    ?: error("Receiver rejected media type ${profile.streamType}")
+                val dataPort = (stream["dataPort"] as? Number)?.toInt()?.takeIf { it in 1..65535 }
+                    ?: error("Missing audio data port")
+                val controlPort = (stream["controlPort"] as? Number)?.toInt()?.takeIf { it in 1..65535 }
+                val host = rtsp.connectedAddress ?: error("RTSP is disconnected")
+                transport.attachAudio(socket, java.net.InetSocketAddress(host, dataPort),
+                    CarPlayMediaWire.streamKey(shared, audioId),
+                    controlPort?.let { java.net.InetSocketAddress(host, it) })
+                log("AirPlay: playback audio SETUP accepted type=${profile.streamType} dataPort=$dataPort controlPort=${controlPort ?: 0} ours=${socket.localPort} latency=${profile.latencyMs}ms profile=${profile.label}")
+            } catch (e: Exception) { socket.close(); throw e }
+        },
+        teardown = {
+            transport.detachAudio()
+            synchronized(rtspLock) { rtsp.teardown(AudioStreamLifecycle.teardownBody(profile.streamType)) }
+                .requireSuccess("audio TEARDOWN")
+            log("AirPlay: audio TEARDOWN accepted type=${profile.streamType}")
+        },
+        log = log,
+    )
 
     /**
      * Connects the event-channel changeModes callback to the protocol-only
