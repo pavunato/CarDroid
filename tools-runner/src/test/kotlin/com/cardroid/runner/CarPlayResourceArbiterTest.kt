@@ -230,4 +230,23 @@ class CarPlayResourceArbiterTest {
         arbiter.reset()
         assertFalse(arbiter.isScreenReturnCurrent(token))
     }
+
+    @Test
+    fun postTunnelCommandBodiesKeepKnownKeySetAndSize() {
+        // Real iPhone (receiver log): modesChanged keys=[appStates, resources] at 287 B, disableBluetooth keys=[deviceID] at 115 B.
+        // Nested modesChanged fields are NOT observable in that log, so the 55 B gap to our 232 B is unexplained (see parity notes);
+        // this pins the top-level key sets and the sizes so a future capture-backed change is a conscious edit.
+        val arbiter = CarPlayResourceArbiter()
+        arbiter.startAccessoryOwned(CarPlayResourceArbiter.RESOURCE_AUDIO)
+        arbiter.startAccessoryOwned(CarPlayResourceArbiter.RESOURCE_SCREEN)
+        val modes = AirPlayBplist.encode(arbiter.modesChangedCommand())
+        val map = ReceiverPlist.map(modes)
+        assertEquals("modesChanged", map["type"])
+        assertEquals(setOf("appStates", "resources"), (map["params"] as Map<*, *>).keys)
+        assertEquals(232, modes.size)
+        val bt = AirPlayBplist.encode(
+            com.cardroid.lib.airplay.AirPlayHandshakeOrchestrator.disableBluetoothCommand("64:7B:CE:A5:6A:B7"))
+        assertEquals(setOf("deviceID"), (ReceiverPlist.map(bt)["params"] as Map<*, *>).keys)
+        assertEquals(115, bt.size)
+    }
 }
