@@ -64,6 +64,13 @@ class CarDroidService : Service() {
             android.content.IntentFilter(android.bluetooth.BluetoothAdapter.ACTION_STATE_CHANGED),
             androidx.core.content.ContextCompat.RECEIVER_EXPORTED)
         CarDroidLog.attachFile(applicationContext)
+        // Real phone battery level for iAP2 PowerUpdate (0xAE01), read from the sticky battery intent.
+        com.cardroid.lib.PhonePower.delegate = com.cardroid.lib.PhonePowerProvider {
+            val i = applicationContext.registerReceiver(null, android.content.IntentFilter(android.content.Intent.ACTION_BATTERY_CHANGED))
+            val level = i?.getIntExtra(android.os.BatteryManager.EXTRA_LEVEL, -1) ?: -1
+            val scale = i?.getIntExtra(android.os.BatteryManager.EXTRA_SCALE, -1) ?: -1
+            if (level >= 0 && scale > 0) level * 100 / scale else null
+        }
         CarDroidSettings.initialize(applicationContext)
         shizukuStarter = ShizukuHelperStarter.get(applicationContext).also { it.initialize() }
         shizukuStarter?.let { starter ->

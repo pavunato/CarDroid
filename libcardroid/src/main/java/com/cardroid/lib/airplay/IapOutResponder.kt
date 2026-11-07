@@ -28,9 +28,9 @@ import java.util.LinkedHashMap
  * sequencing deterministic without ever blocking the event HTTP acknowledgement.
  *
  * Once the link is up, the existing [CarPlaySession] is used for the phone-role
- * identification and MFi flow. Its transport adapter filters Wi-Fi handoff,
- * CarPlay availability, and AirPlay-start actions, so this experiment cannot
- * start a second Wi-Fi/AirPlay session.
+ * identification and MFi flow. Like an iPhone it sends 0x5702/0x4300 and
+ * swallows the car's 0x5703/0x4301 replies through inert Wi-Fi and AirPlay-start
+ * callbacks, so a tunnel replay cannot rejoin Wi-Fi or start a second session.
  */
 class IapOutResponder(
     private val send: (ByteArray) -> Unit,
@@ -102,7 +102,7 @@ class IapOutResponder(
 
             override fun sendControl(controlMessageBytes: ByteArray) {
                 val id = Iap2ControlSession.parse(controlMessageBytes)?.first
-                if (id != null && id in SIDE_EFFECT_MESSAGES) {
+                if (id != null && id in OUTBOUND_BLOCKED) {
                     log("[iap-out] ignored side effect tx 0x%04X".format(id))
                     return
                 }
@@ -213,7 +213,10 @@ class IapOutResponder(
 
     /** Drive bounded retransmission. The owner should call this about every 100 ms. */
     fun tick(nowMs: Long = clockMs()) {
-        if (state == State.LINK_UP) carPlay.refreshNowPlaying()
+        if (state == State.LINK_UP) {
+            carPlay.refreshNowPlaying()
+            carPlay.refreshPower()
+        }
         if (pending.isEmpty()) return
         val expired = pending.entries.toList().filter { nowMs >= it.value.deadlineMs }
         // A missing ACK invalidates the whole link sequence. Removing only the
@@ -547,7 +550,7 @@ class IapOutResponder(
             return
         }
 
-        if (id in SIDE_EFFECT_MESSAGES) {
+        if (id in INBOUND_BLOCKED) {
             log("[iap-out] ignored side effect 0x%04X session=%d".format(id, session.toInt() and 0xFF))
             return
         }
@@ -656,11 +659,19 @@ class IapOutResponder(
         const val DEFAULT_RETRANSMIT_MS = 1_500
         const val MAX_RETRANSMITS = 3
         const val MARKER_ECHO_WINDOW_MS = 1_000L
-        val SIDE_EFFECT_MESSAGES = setOf(
-            Iap2ControlSession.Msg.REQUEST_WIFI_INFORMATION,
+        /**
+         * Like an iPhone, we send 0x5702 and 0x4300 over the tunnel; the car answers
+         * 0x5703 and 0x4301. The car's answers are accepted by the session, whose Wi-Fi
+         * and AirPlay-start callbacks are inert here, so nothing is joined or started.
+         * Only messages that make no sense in this direction stay blocked.
+         */
+        val OUTBOUND_BLOCKED = setOf(
             Iap2ControlSession.Msg.WIFI_INFORMATION,
-            Iap2ControlSession.Msg.CARPLAY_AVAILABILITY,
             Iap2ControlSession.Msg.CARPLAY_AIRPLAY_START,
+        )
+        val INBOUND_BLOCKED = setOf(
+            Iap2ControlSession.Msg.REQUEST_WIFI_INFORMATION,
+            Iap2ControlSession.Msg.CARPLAY_AVAILABILITY,
         )
     }
 }
