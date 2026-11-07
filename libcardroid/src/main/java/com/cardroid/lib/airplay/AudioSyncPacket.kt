@@ -25,7 +25,28 @@ object AudioSyncPacket {
         return packet
     }
 
-    /** Monotonic time encoded as an NTP 64-bit seconds/fraction pair. */
+    /** Seconds from the NTP epoch (1900-01-01) to the Unix epoch. */
+    const val NTP_UNIX_OFFSET_SECONDS = 2_208_988_800L
+
+    /**
+     * Shifts `System.nanoTime()` into NTP-epoch wall-clock nanoseconds, captured once so the
+     * sender clock stays monotonic. A real iPhone answers timing requests on the wall clock
+     * (NTP64 ≈ 2^63.9); an uptime clock gives the receiver a 7-byte synced timestamp that
+     * DiPlay 0.2.22 cannot plist-encode in its /feedback reply (HTTP 500, session end).
+     */
+    private val senderEpochOffsetNanos: Long = run {
+        val wallMs = System.currentTimeMillis()
+        (wallMs / 1000L + NTP_UNIX_OFFSET_SECONDS) * 1_000_000_000L + (wallMs % 1000L) * 1_000_000L -
+            System.nanoTime()
+    }
+
+    /** A `System.nanoTime()` reading in the sender's NTP-epoch clock domain. */
+    fun senderNanos(monotonicNanos: Long): Long = monotonicNanos + senderEpochOffsetNanos
+
+    /** Now on the sender clock, as NTP64 bytes. */
+    fun ntpNow(): ByteArray = ntpFromNanos(senderNanos(System.nanoTime()))
+
+    /** Nanoseconds since the NTP epoch encoded as an NTP 64-bit seconds/fraction pair. */
     fun ntpFromNanos(nanos: Long): ByteArray {
         val seconds = Math.floorDiv(nanos, 1_000_000_000L)
         val fractionNanos = Math.floorMod(nanos, 1_000_000_000L)

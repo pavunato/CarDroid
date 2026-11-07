@@ -11,7 +11,7 @@ import java.util.concurrent.atomic.AtomicLong
  * `timingPort` advertised in SETUP and syncs its media clock to our replies.
  * Buffered MainHigh (type 102) audio is scheduled on that clock, so the
  * replies must use the same time base as the audio sync anchors
- * (`System.nanoTime()` via [AudioSyncPacket.ntpFromNanos]).  The native
+ * (NTP-epoch wall clock via [AudioSyncPacket.senderNanos], like a real iPhone).  The native
  * OkCar responder's clock is not visible, which is why this exists.
  *
  * Wire format (big-endian): [0x80][pt][length=7][rtp_ts=0][originate 8][receive 8][transmit 8].
@@ -46,8 +46,10 @@ class AirPlayTimingServer(private val log: (String) -> Unit = {}) {
         while (running) {
             val packet = DatagramPacket(buffer, buffer.size)
             try { s.receive(packet) } catch (_: Exception) { return }
-            val received = System.nanoTime()
-            val response = buildResponse(buffer.copyOf(packet.length), received, System.nanoTime())
+            val received = AudioSyncPacket.senderNanos(System.nanoTime())
+            val response = buildResponse(
+                buffer.copyOf(packet.length), received, AudioSyncPacket.senderNanos(System.nanoTime()),
+            )
             if (response == null) {
                 log("AirPlay: timing server ignored ${packet.length}B non-timesync packet")
                 continue

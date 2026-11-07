@@ -10,6 +10,7 @@ import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class AirPlayTimingServerTest {
     /** Request shaped like Apple's _TimingSendRequest: v2, pt 0xD2, length 7, transmit time in bytes 24..32. */
@@ -31,6 +32,36 @@ class AirPlayTimingServerTest {
         // Same time base as the audio sync anchors.
         assertContentEquals(AudioSyncPacket.ntpFromNanos(5_000_000_000L), reply.copyOfRange(16, 24))
         assertContentEquals(AudioSyncPacket.ntpFromNanos(5_000_000_500L), reply.copyOfRange(24, 32))
+    }
+
+    @Test
+    fun senderClockIsNtpEpochWallClockLikeIphone() {
+        val ntp = AudioSyncPacket.ntpNow()
+        // Full 8-byte NTP64 value: top byte set, so receivers encode it at its natural width.
+        assertTrue(ntp[0].toInt() and 0xff >= 0xE0, "top byte ${ntp[0].toInt() and 0xff}")
+        val seconds = java.nio.ByteBuffer.wrap(ntp).int.toLong() and 0xffff_ffffL
+        val unixSeconds = seconds - AudioSyncPacket.NTP_UNIX_OFFSET_SECONDS
+        assertTrue(kotlin.math.abs(unixSeconds - System.currentTimeMillis() / 1000L) <= 2)
+    }
+
+    @Test
+    fun udpReplyUsesSenderClock() {
+        val server = AirPlayTimingServer()
+        val port = server.start()
+        try {
+            DatagramSocket().use { client ->
+                client.soTimeout = 2000
+                val req = request(ByteArray(8))
+                client.send(DatagramPacket(req, req.size, InetAddress.getLoopbackAddress(), port))
+                val buf = ByteArray(64)
+                client.receive(DatagramPacket(buf, buf.size))
+                val transmit = java.nio.ByteBuffer.wrap(buf, 24, 8).int.toLong() and 0xffff_ffffL
+                val unixSeconds = transmit - AudioSyncPacket.NTP_UNIX_OFFSET_SECONDS
+                assertTrue(kotlin.math.abs(unixSeconds - System.currentTimeMillis() / 1000L) <= 2)
+            }
+        } finally {
+            server.stop()
+        }
     }
 
     @Test

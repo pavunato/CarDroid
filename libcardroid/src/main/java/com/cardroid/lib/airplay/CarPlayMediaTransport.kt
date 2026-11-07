@@ -295,7 +295,7 @@ class CarPlayMediaTransport(
                         syncSequence++ and 0xffff,
                         current,
                         next,
-                        AudioSyncPacket.ntpFromNanos(System.nanoTime()),
+                        AudioSyncPacket.ntpNow(),
                         firstSync,
                     )
                     socket.send(DatagramPacket(packet, packet.size, target))
