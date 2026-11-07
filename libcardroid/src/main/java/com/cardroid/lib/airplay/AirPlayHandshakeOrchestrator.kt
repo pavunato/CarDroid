@@ -774,30 +774,7 @@ class AirPlayHandshakeOrchestrator(
         runCatching { diagSink?.invoke(label, body) }.onFailure { log("[car-diag] save $label failed: ${it.javaClass.simpleName}: ${it.message}") }
     }
 
-    private fun buildSetupPlist(p: AirPlayParams): AirPlayBplist.Value {
-        return AirPlayBplist.dict(*buildSetupPairs(p))
-    }
-
-    private fun buildSetupPairs(p: AirPlayParams): Array<Pair<String, AirPlayBplist.Value>> =
-        arrayOf(
-            "deviceID" to AirPlayBplist.str(p.deviceId),
-            "eiv" to AirPlayBplist.data(p.eiv),
-            "ekey" to AirPlayBplist.data(p.ekey),
-            "et" to AirPlayBplist.int(1),
-            "groupContainsGroupLeader" to AirPlayBplist.bool(false),
-            "groupUUID" to AirPlayBplist.str(p.setupSessionUuid.uppercase()),
-            "isMultiSelectAirPlay" to AirPlayBplist.bool(false),
-            "macAddress" to AirPlayBplist.str(p.macAddress),
-            "model" to AirPlayBplist.str(p.model),
-            "name" to AirPlayBplist.str(p.name),
-            "osBuildVersion" to AirPlayBplist.str(p.osBuildVersion),
-            "osName" to AirPlayBplist.str("iPhone OS"),
-            "osVersion" to AirPlayBplist.str("14.5"),
-            "senderSupportsRelay" to AirPlayBplist.bool(false),
-            "sessionUUID" to AirPlayBplist.str(p.setupSessionUuid),
-            "sourceVersion" to AirPlayBplist.str(p.sourceVersion),
-            "timingPort" to AirPlayBplist.int(p.timingPort),
-        )
+    private fun buildSetupPlist(p: AirPlayParams): AirPlayBplist.Value = AirPlaySessionSetup.build(p)
 
     private fun plistText(v: Any?): String = when (v) {
         is ByteArray -> "<${v.size}B>"
