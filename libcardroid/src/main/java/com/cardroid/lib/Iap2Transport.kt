@@ -38,6 +38,8 @@ class Iap2Transport(
     private val onLog: (String) -> Unit = {},
     private val diagnostics: ConnectionDiagnostics = ConnectionDiagnostics(),
     private val diagnosticToken: Long = 0,
+    /** Called with the head unit's Bluetooth address when it opens the iAP2 channel. */
+    private val onHeadUnit: (String) -> Unit = {},
 ) : IapTransport {
     private val _listening = MutableStateFlow(false)
     val listening: StateFlow<Boolean> = _listening
@@ -140,6 +142,7 @@ class Iap2Transport(
                             input = s.inputStream
                             output = s.outputStream
                             onLog("Head unit connected: ${s.remoteDevice.address}")
+                            runCatching { onHeadUnit(s.remoteDevice.address) }
                             handleSession()
                         } finally {
                             runCatching { s.close() }

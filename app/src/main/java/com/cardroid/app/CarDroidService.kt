@@ -361,8 +361,22 @@ class CarDroidService : Service() {
         return null
     }
 
-    @SuppressLint("MissingPermission")
+    private fun rememberCar(address: String) {
+        getSharedPreferences("car", MODE_PRIVATE).edit().putString("lastCarAddress", address.uppercase()).apply()
+    }
 
+    private fun rememberedCar(): String? = getSharedPreferences("car", MODE_PRIVATE).getString("lastCarAddress", null)
+
+    /** Brief baseband link (SDP query) to a bonded car so it sees the phone arrive and dials iAP2. */
+    @SuppressLint("MissingPermission")
+    private fun wakeCar(adapter: android.bluetooth.BluetoothAdapter, address: String): Boolean {
+        if (!adapter.isEnabled || !android.bluetooth.BluetoothAdapter.checkBluetoothAddress(address)) return false
+        val device = adapter.getRemoteDevice(address)
+        if (device.bondState != android.bluetooth.BluetoothDevice.BOND_BONDED) return false
+        return device.fetchUuidsWithSdp()
+    }
+
+    @SuppressLint("MissingPermission")
     private fun startBt() {
         // Auto-start may arrive via startForegroundService while already running; keep the foreground promise.
         if (pipeline != null) { startMediaForeground(); return }
@@ -393,7 +407,7 @@ class CarDroidService : Service() {
 
         val p = CarDroidPipeline.bluetooth(adapter, identity, mfi, wifi, log = CarDroidLog::log,
             diagnostics = CarDroidLog.diagnostics, diagnosticToken = diagnosticToken,
-            bluetoothIdentifier = ::bluetoothMac)
+            bluetoothIdentifier = ::bluetoothMac, onHeadUnit = ::rememberCar)
         pipeline = p
         teardownGuard.rearm()
         p.onLinkUp = { teardownGuard.rearm() }
@@ -402,6 +416,15 @@ class CarDroidService : Service() {
         }
         p.onSessionEnded = { reason -> teardownSession(p, reason) }
         p.start(sc)
+        com.cardroid.lib.CarWakeLoop(
+            target = ::rememberedCar,
+            idle = {
+                pipeline === p && airPlay == null && available.value &&
+                    p.state.value.let { it is com.cardroid.lib.CarPlaySession.State.Idle || it is com.cardroid.lib.CarPlaySession.State.Failed }
+            },
+            poke = { address -> wakeCar(adapter, address) },
+            log = CarDroidLog::log,
+        ).start(sc)
         sc.launch {
             p.listening?.collect { listening ->
                 if (pipeline === p) available.value = listening

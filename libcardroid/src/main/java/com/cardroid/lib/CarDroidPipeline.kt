@@ -98,8 +98,9 @@ class CarDroidPipeline private constructor(
             diagnostics: ConnectionDiagnostics = ConnectionDiagnostics(),
             diagnosticToken: Long = 0,
             bluetoothIdentifier: () -> String? = { null },
+            onHeadUnit: (String) -> Unit = {},
         ): CarDroidPipeline = CarDroidPipeline(
-            transport = Iap2Transport(adapter, linkSyncParams, log, diagnostics, diagnosticToken),
+            transport = Iap2Transport(adapter, linkSyncParams, log, diagnostics, diagnosticToken, onHeadUnit),
             advertiser = IPhoneAdvertiser(adapter, identity, log, diagnostics, diagnosticToken),
             diagnostics = diagnostics,
             diagnosticToken = diagnosticToken,
