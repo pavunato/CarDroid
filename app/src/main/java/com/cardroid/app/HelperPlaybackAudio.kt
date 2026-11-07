@@ -45,14 +45,27 @@ class HelperPlaybackAudio(
                 }
                 log("HelperAudio: capturing device output without MediaProjection; phone speaker redirected")
                 val signal = PlaybackSignalTracker(profile.sampleRate.toLong() * 2)
+                var streamReady = false
+                var lastSetupAttemptNanos = 0L
                 while (!closed.get()) {
                     val frame = HelperProtocol.read(input)
                     check(frame.type == HelperProtocol.T_AUDIO_PCM && frame.payload.size == profile.samplesPerPacket * 4) {
                         if (frame.type == HelperProtocol.T_ERROR) HelperProtocol.parseError(frame.payload).message else "Invalid audio frame"
                     }
-                    signal.accept(frame.payload.any { it != 0.toByte() }, profile.samplesPerPacket)?.let {
+                    val audible = frame.payload.any { it != 0.toByte() }
+                    signal.accept(audible, profile.samplesPerPacket)?.let {
                         log("HelperAudio: playback signal=$it capturedFrames=${signal.capturedFrames}")
+                        // Real iPhone: type-102 SETUP when playback starts, TEARDOWN after sustained silence.
+                        if (it == PlaybackSignalTracker.Transition.SILENT) { transport.releaseAudioStream(); streamReady = false }
                     }
+                    if (audible && !streamReady) {
+                        val now = System.nanoTime()
+                        if (now - lastSetupAttemptNanos >= SETUP_RETRY_NANOS) {
+                            lastSetupAttemptNanos = now
+                            streamReady = transport.ensureAudioStream()
+                        }
+                    }
+                    if (!streamReady) continue // no type-102 stream yet: drop silence/unsent frames
                     val aac = encoder
                     if (aac != null) aac.encode(frame.payload).forEach { transport.sendAudioEncoded(it, profile.samplesPerPacket) }
                     else transport.sendAudio(frame.payload)
@@ -69,6 +82,10 @@ class HelperPlaybackAudio(
                 close()
             }
         }, "helper-audio-client").start()
+    }
+
+    private companion object {
+        const val SETUP_RETRY_NANOS = 5_000_000_000L
     }
 
     override fun close() {
