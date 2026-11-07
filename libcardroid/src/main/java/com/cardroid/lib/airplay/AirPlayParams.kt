@@ -40,13 +40,19 @@ data class AirPlayParams(
     /** OkcarOS SETUP `macAddress` default from PcConnectService. */
     var macAddress: String = "00:11:22:33:44:55",
     /** Marketing model string used in SETUP. */
-    var model: String = "iPhone10,1",
+    var model: String = "iPhone18,4",
     /** Device name used in SETUP. OkcarOS sends `OKCAR's box`. */
     var name: String = com.cardroid.lib.IPhoneIdentity.DEVICE_NAME,
+    /** Pretend OS name used in SETUP. */
+    var osName: String = "iPhone OS",
+    /** Pretend iOS version used in SETUP (consistent with [osBuildVersion] and [sourceVersion]). */
+    var osVersion: String = "26.7.1",
+    /** Fresh per-session correlation UUID sent in SETUP as `sessionCorrelationUUID`. */
+    var sessionCorrelationUuid: String = UUID.randomUUID().toString().uppercase(),
     /** Pretend iOS build version used in SETUP. */
-    var osBuildVersion: String = "18E212",
+    var osBuildVersion: String = "23H222",
     /** AirPlay source version sent in SETUP / RTSP headers. */
-    var sourceVersion: String = "420.5",
+    var sourceVersion: String = "960.13.1",
 )
 
 private val airPlayRandom = SecureRandom()

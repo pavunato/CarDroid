@@ -11,11 +11,11 @@ data class IPhoneIdentity(
     /** Bluetooth Classic name presented over Extended Inquiry Response. */
     val bluetoothName: String = DEVICE_NAME,
     /** Marketing / model name (control-session param). */
-    val model: String = "iPhone10,1",
+    val model: String = "iPhone18,4",
     /** Friendly device name. */
     val name: String = DEVICE_NAME,
     /** iOS-like firmware version. */
-    val firmwareVersion: String = "18E212",
+    val firmwareVersion: String = "23H222",
     /** Serial number. */
     val serial: String = "F2LL2DEFGHIJ",
     /** Hardware revision. */

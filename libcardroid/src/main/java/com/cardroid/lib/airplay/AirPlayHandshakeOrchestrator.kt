@@ -111,6 +111,8 @@ class AirPlayHandshakeOrchestrator(
     @Volatile private var iapTunnel: IapTunnelStream? = null // car-touch-iap2-tunnel
     val tunnel: IapTunnelStream? get() = iapTunnel // car-touch-iap2-tunnel
     private fun closeTunnel() { iapTunnel?.let { runCatching { it.close() } }; iapTunnel = null } // car-touch-iap2-tunnel
+    @Volatile private var keepAlive: AirPlayKeepAlive? = null
+    private fun stopKeepAlive() { keepAlive?.close(); keepAlive = null }
     private var feedbackJob: Job? = null
     private var timingSocket: DatagramSocket? = null
     private var timingSession: AirPlayTimingSession? = null
@@ -150,6 +152,7 @@ class AirPlayHandshakeOrchestrator(
         stopResourceModes()
         resourceArbiter.reset()
         closeTunnel() // car-touch-iap2-tunnel
+        stopKeepAlive()
         closePendingEvents()
         mediaTransport?.close(); mediaTransport = null
         takeTimingSession()?.let { ts -> runCatching { ts.close() } }
@@ -226,6 +229,13 @@ class AirPlayHandshakeOrchestrator(
             }
             setupResp.requireSuccess("SETUP")
             diagCapture("setup-resp", setupResp.body, CarDiagSummary.summarizeSetupResponse(setupResp.body)) // car-touch-iap2-tunnel
+
+            // keepAliveLowPower=true makes the receiver return keepAlivePort; an iPhone then sends periodic UDP to it.
+            (ReceiverPlist.map(setupResp.body)["keepAlivePort"] as? Number)?.toInt()?.takeIf { it in 1..65535 }?.let { kp ->
+                rtsp.connectedAddress?.let { addr ->
+                    keepAlive = AirPlayKeepAlive(addr, kp, log).also { it.start(scope) }
+                }
+            }
 
             // Real iPhone opens the session event socket immediately after SETUP,
             // before /info and RECORD. Some receivers wait for this connection
@@ -733,6 +743,7 @@ class AirPlayHandshakeOrchestrator(
         stopIapOut()
         stopResourceModes()
         closeTunnel() // car-touch-iap2-tunnel
+        stopKeepAlive()
         closePendingEvents()
         mediaTransport?.close(); mediaTransport = null
         feedbackJob?.cancel()
@@ -749,30 +760,7 @@ class AirPlayHandshakeOrchestrator(
         runCatching { diagSink?.invoke(label, body) }.onFailure { log("[car-diag] save $label failed: ${it.javaClass.simpleName}: ${it.message}") }
     }
 
-    private fun buildSetupPlist(p: AirPlayParams): AirPlayBplist.Value {
-        return AirPlayBplist.dict(*buildSetupPairs(p))
-    }
-
-    private fun buildSetupPairs(p: AirPlayParams): Array<Pair<String, AirPlayBplist.Value>> =
-        arrayOf(
-            "deviceID" to AirPlayBplist.str(p.deviceId),
-            "eiv" to AirPlayBplist.data(p.eiv),
-            "ekey" to AirPlayBplist.data(p.ekey),
-            "et" to AirPlayBplist.int(1),
-            "groupContainsGroupLeader" to AirPlayBplist.bool(false),
-            "groupUUID" to AirPlayBplist.str(p.setupSessionUuid.uppercase()),
-            "isMultiSelectAirPlay" to AirPlayBplist.bool(false),
-            "macAddress" to AirPlayBplist.str(p.macAddress),
-            "model" to AirPlayBplist.str(p.model),
-            "name" to AirPlayBplist.str(p.name),
-            "osBuildVersion" to AirPlayBplist.str(p.osBuildVersion),
-            "osName" to AirPlayBplist.str("iPhone OS"),
-            "osVersion" to AirPlayBplist.str("14.5"),
-            "senderSupportsRelay" to AirPlayBplist.bool(false),
-            "sessionUUID" to AirPlayBplist.str(p.setupSessionUuid),
-            "sourceVersion" to AirPlayBplist.str(p.sourceVersion),
-            "timingPort" to AirPlayBplist.int(p.timingPort),
-        )
+    private fun buildSetupPlist(p: AirPlayParams): AirPlayBplist.Value = AirPlaySessionSetup.build(p)
 
     private fun plistText(v: Any?): String = when (v) {
         is ByteArray -> "<${v.size}B>"
