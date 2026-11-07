@@ -285,6 +285,7 @@ class CarDroidService : Service() {
         val nativeCanvas = helperClient?.isConnected == true
         return com.cardroid.lib.airplay.CarPlayMediaOptions(controllerId,seed,
             if (pinned) hex.chunked(2).map { it.toInt(16).toByte() }.toByteArray() else null, width=captureWidth, height=captureHeight,
+            receiverBssid = ep.bssid.takeIf { it.isNotBlank() },
             nowPlaying = { helperClient?.nowPlaying ?: com.cardroid.lib.NowPlayingState() },
             onRequestUI = { request -> if (mode == Mode.HELPER) com.cardroid.app.car.RequestUiApps.open(applicationContext, request) },
             maxCanvasLongSide = if (nativeCanvas) com.cardroid.lib.airplay.VideoCanvas.NATIVE_MAX_LONG_SIDE else com.cardroid.lib.airplay.VideoCanvas.STANDARD_LONG_SIDE,

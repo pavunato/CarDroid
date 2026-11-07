@@ -18,6 +18,8 @@ class CarPlayMediaOptions(
     var fps: Int = 30,
     /** The car display's /info uuid; named in the screen SETUP as a real iPhone does. */
     var displayUuid: String? = null,
+    /** Receiver Wi-Fi BSSID from iAP2 0x4301; a real iPhone names its tunnel channel after it. */
+    var receiverBssid: String? = null,
     /** Long-side cap for the encoded canvas; [VideoCanvas.NATIVE_MAX_LONG_SIDE] streams the panel's own size. */
     var maxCanvasLongSide: Int = VideoCanvas.STANDARD_LONG_SIDE,
     /** App hook after an accepted (de-duplicated) requestUI: open the asked-for app on the car display. */

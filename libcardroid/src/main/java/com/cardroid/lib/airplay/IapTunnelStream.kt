@@ -74,7 +74,7 @@ class IapTunnelStream(
         fun streamEntry(
             seed: Long,
             clientUuid: String = java.util.UUID.randomUUID().toString().uppercase(),
-            channelId: String = randomChannelId(),
+            channelId: String = nextChannelId(),
         ): AirPlayBplist.Value = AirPlayBplist.dict(
             "controlType" to AirPlayBplist.int(2),
             "channelID" to AirPlayBplist.str(channelId),
@@ -86,11 +86,25 @@ class IapTunnelStream(
             "clientTypeUUID" to AirPlayBplist.str(CLIENT_TYPE_UUID),
         )
 
-        /** "<locally-administered MAC>-RCS-1", the iPhone's channelID shape (e.g. 52:34:11:BE:8F:48-RCS-1). */
+        /** "<locally-administered MAC>-RCS-<n>", the iPhone's channelID shape (e.g. 52:34:11:BE:8F:48-RCS-1). */
         fun randomChannelId(random: SecureRandom = SecureRandom()): String {
             val b = ByteArray(6).also { random.nextBytes(it) }
             b[0] = ((b[0].toInt() and 0xFC) or 0x02).toByte() // unicast, locally administered
             return b.joinToString(":") { "%02X".format(it) } + "-RCS-1"
+        }
+
+        /**
+         * A real iPhone names the tunnel channel "<receiver Wi-Fi BSSID>-RCS-<n>" and counts its tunnel
+         * sessions: RCS-1, RCS-2, RCS-3 across three DiPlay connections hours apart, each time with
+         * DiPlay's P2P BSSID (the bssid of iAP2 0x4301). Without a BSSID, a stable random MAC is used.
+         */
+        private val fallbackChannelMac: String = randomChannelId().substringBefore("-RCS-")
+        private val sessionChannelCount = java.util.concurrent.atomic.AtomicInteger()
+
+        fun nextChannelId(receiverBssid: String? = null): String {
+            val mac = receiverBssid?.uppercase()?.takeIf { Regex("([0-9A-F]{2}:){5}[0-9A-F]{2}").matches(it) }
+                ?: fallbackChannelMac
+            return "$mac-RCS-${sessionChannelCount.incrementAndGet()}"
         }
 
         /** dataPort of the type-130 reply entry (our SETUP carried exactly one), or null if absent/invalid. */

@@ -349,7 +349,8 @@ class AirPlayHandshakeOrchestrator(
         fun setupStreams(list: List<AirPlayBplist.Value>) =
             rtsp.setup(AirPlayBplist.encode(AirPlayBplist.dict("streams" to AirPlayBplist.ArrayV(list))))
         // A rejected optional stream is recoverable; an RTSP I/O failure is not.
-        val tunnelResponse = setupStreams(listOf(IapTunnelStream.streamEntry(tunnelSeed)))
+        val tunnelResponse = setupStreams(listOf(IapTunnelStream.streamEntry(
+            tunnelSeed, channelId = IapTunnelStream.nextChannelId(options.receiverBssid))))
         val tunnelPort = if (tunnelResponse.statusCode in 200..299) {
             diagCapture("tunnel-setup-resp", tunnelResponse.body,
                 CarDiagSummary.summarizeMediaSetupResponse(tunnelResponse.body))
@@ -793,10 +794,11 @@ class AirPlayHandshakeOrchestrator(
 
         /** Screen stream description exactly as a real iPhone sends it (latency 75 ms, car display uuid). */
         fun iphoneVideoStream(streamConnectionId: Long, displayUuid: String?): AirPlayBplist.Value {
+            // Key order as a real iPhone's screen SETUP (DiPlay trace): streamConnectionID, latencyMs, type, uuid.
             val pairs = mutableListOf<Pair<String, AirPlayBplist.Value>>(
-                "type" to AirPlayBplist.int(110),
                 "streamConnectionID" to AirPlayBplist.int(streamConnectionId),
                 "latencyMs" to AirPlayBplist.int(IPHONE_VIDEO_LATENCY_MS),
+                "type" to AirPlayBplist.int(110),
             )
             if (displayUuid != null) pairs += "uuid" to AirPlayBplist.str(displayUuid)
             return AirPlayBplist.dict(*pairs.toTypedArray())

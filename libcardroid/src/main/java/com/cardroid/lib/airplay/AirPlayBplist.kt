@@ -40,14 +40,15 @@ object AirPlayBplist {
     fun array(vararg vs: Value): ArrayV = ArrayV(vs.toList())
 
     /**
-     * Shared like an iPhone's encoder: numbers, booleans and short strings (Apple's tagged-pointer
+     * Shared like an iPhone's encoder: numbers and short strings (Apple's tagged-pointer
      * strings, at most [SHARED_STRING_MAX] chars) are written once and referenced again; longer
      * strings are written at every use and containers are never shared. Measured from a real
      * iPhone's 287 B `modesChanged` (DiPlay trace): `entity` once, `appStateID` x3,
      * `resourceID`/`permanentEntity` x2; that rule reproduces its size byte-for-byte.
      */
     private fun shared(v: Value): Boolean = when (v) {
-        is IntV, is BoolV -> true
+        // Booleans are NOT shared: the iPhone's tunnel SETUP writes `true` twice (328 B).
+        is IntV -> true
         is StringV -> v.s.length <= SHARED_STRING_MAX && v.s.all { it.code < 128 }
         else -> false
     }
