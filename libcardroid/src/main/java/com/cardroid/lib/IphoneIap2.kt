@@ -29,6 +29,9 @@ object IphoneIap2 {
     const val START_CALL_STATE_UPDATES = 0x4154
     const val CALL_STATE_UPDATE = 0x4155
     const val START_COMMUNICATIONS_UPDATES = 0x4157
+    const val START_ROUTE_GUIDANCE_UPDATES = 0x5200
+    const val START_POWER_UPDATES = 0xAE00
+    const val POWER_UPDATE = 0xAE01
     const val START_LIST_UPDATES = 0x4170
     const val LIST_UPDATE = 0x4171
 
@@ -84,6 +87,23 @@ object IphoneIap2 {
                 Iap2ControlSession.param(0x0007, byteArrayOf(0, 0)),
         )
         else -> null
+    }
+
+    /**
+     * 0xAE01 PowerUpdate messages a real iPhone sends after 0xAE00 (params 4, 5, 6 requested).
+     * Captured: one message per parameter; 4 and 5 are empty NUL strings, 6 is a u16 that
+     * tracks the battery percentage (30..34 over a session, drifting down). Parameters the
+     * car did not request are not sent; param 6 is omitted when the level is unknown.
+     */
+    fun powerUpdates(requestedIds: Set<Int>, batteryPercent: Int?): List<ByteArray> = buildList {
+        if (4 in requestedIds) add(Iap2ControlSession.build(POWER_UPDATE, Iap2ControlSession.param(4, byteArrayOf(0))))
+        if (5 in requestedIds) add(Iap2ControlSession.build(POWER_UPDATE, Iap2ControlSession.param(5, byteArrayOf(0))))
+        if (6 in requestedIds && batteryPercent != null) add(powerLevelUpdate(batteryPercent))
+    }
+
+    fun powerLevelUpdate(batteryPercent: Int): ByteArray {
+        val v = batteryPercent.coerceIn(0, 100)
+        return Iap2ControlSession.build(POWER_UPDATE, Iap2ControlSession.param(6, byteArrayOf((v shr 8).toByte(), v.toByte())))
     }
 
     /** 0x4E0B: u64 Unix seconds, s16 timezone offset (minutes), u8 daylight saving; all big-endian. */

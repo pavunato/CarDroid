@@ -120,7 +120,7 @@ class IapOutResponderTest {
         assertTrue(logs.any { it.contains("car msg 0x1D01") && it.contains("0:4") })
     }
 
-    @Test fun certificateAndResponseUseProviderAndDoNotRequestWifi() {
+    @Test fun certificateAndResponseUseProviderAndRequestWifiLikeIphone() {
         val hash = byteArrayOf(1, 2, 3, 4)
         val provider = object : MfiAuthProvider {
             override val name = "test-provider"
@@ -142,7 +142,7 @@ class IapOutResponderTest {
         auth.onData(carData(seq = 0x14, ack = frame(aa02).seq.toInt() and 0xFF, id = 0xAA03, params = Iap2ControlSession.param(0, byteArrayOf(0x55))))
         val ids = tx.mapNotNull { runCatching { message(it).first }.getOrNull() }
         assertTrue(0xAA05 in ids, "auth success was not queued: $ids")
-        assertFalse(ids.contains(0x5702), "Wi-Fi request must be isolated")
+        assertTrue(ids.contains(0x5702), "iPhone sends 0x5702 over the tunnel: $ids")
         assertTrue(logLines.any { it.contains("auth outcome=accepted") })
     }
 
@@ -199,12 +199,99 @@ class IapOutResponderTest {
         assertEquals(2, completed, "a new link must get one fresh callback")
     }
 
-    @Test fun sideEffectMessagesAreLoggedAndDropped() {
+    @Test fun carInitiatedWifiRequestAndAvailabilityAreLoggedAndDropped() {
         linkUp(); sent.clear()
-        r.onData(carData(seq = 0x12, ack = 2, id = 0x5703, params = Iap2ControlSession.param(1, "ssid\u0000".encodeToByteArray())))
-        assertEquals(1, sent.size)
-        assertEquals(0x40, frame(sent.single()).control.toInt() and 0xFF)
-        assertTrue(logs.any { it.contains("ignored side effect 0x5703") })
+        r.onData(carData(seq = 0x12, ack = 2, id = 0x5702))
+        r.onData(carData(seq = 0x13, ack = 2, id = 0x4300))
+        assertEquals(2, sent.size)
+        assertTrue(sent.all { frame(it).control.toInt() and 0xFF == 0x40 && frame(it).payload.isEmpty() })
+        assertTrue(logs.any { it.contains("ignored side effect 0x5702") })
+        assertTrue(logs.any { it.contains("ignored side effect 0x4300") })
+    }
+
+    private class Authed(val r: IapOutResponder, val tx: MutableList<ByteArray>, var seq: Int, var completions: Int = 0)
+
+    private fun authenticated(): Authed {
+        val provider = object : MfiAuthProvider {
+            override val name = "tunnel-provider"
+            override suspend fun sign(challenge: ByteArray): ByteArray = byteArrayOf(1, 2, 3)
+            override suspend fun certificate(): ByteArray? = null
+        }
+        val tx = mutableListOf<ByteArray>()
+        val a = Authed(IapOutResponder({ tx += it }, { logs += it }, provider), tx, 0x12)
+        a.r.onAuthenticationComplete = { a.completions += 1 }
+        linkUp(a.r)
+        a.r.onData(carData(a.seq++, 2, 0x1D01))
+        a.r.onData(carData(a.seq++, 2, 0xAA01, Iap2ControlSession.param(0, byteArrayOf(9, 8, 7))))
+        a.r.onData(carData(a.seq++, 2, 0xAA03, Iap2ControlSession.param(0, byteArrayOf(0x55))))
+        return a
+    }
+
+    private fun ids(tx: List<ByteArray>) = tx.mapNotNull { runCatching { message(it).first }.getOrNull() }
+
+    private val wifiParams = Iap2ControlSession.param(1, "TIOT\u0000".encodeToByteArray()) +
+        Iap2ControlSession.param(2, "pw\u0000".encodeToByteArray()) +
+        Iap2ControlSession.param(4, byteArrayOf(6))
+
+    @Test fun tunnelReplaysWifiAndCarPlayHandshakeWithoutSideEffects() {
+        val a = authenticated()
+        assertEquals(1, ids(a.tx).count { it == 0x5702 }, "iPhone sends 0x5702 once")
+        assertEquals(0, ids(a.tx).count { it == 0x4300 })
+        assertEquals(1, a.completions)
+
+        // Car answers 0x5703 (twice, as on a real iPhone): one 0x4300, no duplicate.
+        a.r.onData(carData(a.seq++, 2, 0x5703, wifiParams))
+        a.r.onData(carData(a.seq++, 2, 0x5703, wifiParams))
+        assertEquals(1, ids(a.tx).count { it == 0x4300 }, "0x4300 sent exactly once")
+        assertTrue(logs.any { it.contains("Duplicate accessory WiFi configuration ignored") })
+
+        // Retransmitted car frame (same seq) is dropped before dispatch.
+        val dup = carData(a.seq++, 2, 0x4301, Iap2ControlSession.param(2, byteArrayOf(0, 0, 0x1B, 0x58)))
+        val txBefore = a.tx.size
+        a.r.onData(dup)
+        val afterFirst = ids(a.tx)
+        a.r.onData(dup)
+        assertEquals(afterFirst, ids(a.tx))
+        assertTrue(a.tx.size > txBefore) // bare ACKs only
+
+        // Never emit phone-direction-invalid messages, never fire post-auth twice.
+        assertFalse(ids(a.tx).any { it == 0x5703 || it == 0x4301 })
+        assertEquals(1, a.completions)
+        assertTrue(logs.any { it.contains("ignored side effect wifi.connectToAccessory") })
+    }
+
+    @Test fun powerUpdatesMirrorIphoneAndFollowRealBatteryLevel() {
+        var level: Int? = 33
+        com.cardroid.lib.PhonePower.delegate = com.cardroid.lib.PhonePowerProvider { level }
+        try {
+            val a = authenticated()
+            val sub = Iap2ControlSession.param(4, ByteArray(0)) + Iap2ControlSession.param(5, ByteArray(0)) +
+                Iap2ControlSession.param(6, ByteArray(0))
+            a.r.onData(carData(a.seq++, 2, 0xAE00, sub))
+            val raw = a.tx.mapNotNull { runCatching { Iap2ControlSession.parse(frame(it).payload) }.getOrNull() }
+                .filter { it.first == 0xAE01 }.map { it.second }
+            assertEquals(3, raw.size)
+            assertContentEquals(byteArrayOf(0, 5, 0, 4, 0), raw[0])
+            assertContentEquals(byteArrayOf(0, 5, 0, 5, 0), raw[1])
+            assertContentEquals(byteArrayOf(0, 6, 0, 6, 0, 33), raw[2])
+            a.r.tick(); assertEquals(3, ids(a.tx).count { it == 0xAE01 }, "unchanged level sends nothing")
+            level = 32
+            a.r.tick()
+            val updates = a.tx.mapNotNull { runCatching { Iap2ControlSession.parse(frame(it).payload) }.getOrNull() }
+                .filter { it.first == 0xAE01 }
+            assertEquals(4, updates.size)
+            assertContentEquals(byteArrayOf(0, 6, 0, 6, 0, 32), updates.last().second)
+        } finally {
+            com.cardroid.lib.PhonePower.delegate = com.cardroid.lib.PhonePowerProvider { null }
+        }
+    }
+
+    @Test fun routeGuidanceSubscriptionIsAcceptedSilently() {
+        val a = authenticated()
+        val before = ids(a.tx)
+        a.r.onData(carData(a.seq++, 2, 0x5200, Iap2ControlSession.param(0, byteArrayOf(0, 42)) +
+            Iap2ControlSession.param(1, ByteArray(0)) + Iap2ControlSession.param(2, ByteArray(0))))
+        assertEquals(before, ids(a.tx))
     }
 
     @Test fun unackedControlRetransmitsWithBoundedTimer() {

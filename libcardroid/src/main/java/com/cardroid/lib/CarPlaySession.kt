@@ -34,6 +34,7 @@ class CarPlaySession(
     private val diagnosticToken: Long = 0,
     private val bluetoothNotifications: Boolean = false,
     private val bluetoothIdentifier: () -> String? = { null },
+    private val power: PhonePowerProvider = PhonePower,
 ) {
     sealed interface State {
         data object Idle : State
@@ -79,6 +80,8 @@ class CarPlaySession(
     private var accessoryName = ""
     private var nowPlayingSubscribed = false
     private var lastNowPlaying: NowPlayingState? = null
+    private var powerRequested: Set<Int>? = null
+    private var lastPowerLevel: Int? = null
 
     /** Process a control-session message arriving from the head unit. */
     suspend fun onControlMessage(messageId: Int, params: ByteArray) {
@@ -113,6 +116,18 @@ class CarPlaySession(
                 lastNowPlaying = null
                 refreshNowPlaying()
             }
+            IphoneIap2.START_POWER_UPDATES -> if (iphoneBehavior) {
+                val requested = Iap2ControlSession.parseParams(params).map { it.id }.toSet()
+                powerRequested = requested
+                lastPowerLevel = power.batteryPercent()
+                val updates = IphoneIap2.powerUpdates(requested, lastPowerLevel)
+                updates.forEach { transport.sendControl(it) }
+                transport.diagnostic("PowerUpdate x${updates.size} requested=$requested level=$lastPowerLevel")
+            }
+            // A real iPhone never answers 0x5200 without active guidance, and CarDroid has none:
+            // accept the subscription silently.
+            IphoneIap2.START_ROUTE_GUIDANCE_UPDATES ->
+                transport.diagnostic("StartRouteGuidanceUpdates accepted; no guidance state, no reply (iPhone parity)")
             0x5002 -> { nowPlayingSubscribed = false; lastNowPlaying = null }
             else -> {
                 val reply = if (iphoneBehavior) IphoneIap2.replyFor(messageId) else null
@@ -135,6 +150,17 @@ class CarPlaySession(
         lastNowPlaying = current
         transport.sendControl(current.message())
         transport.diagnostic("NowPlayingUpdate title=${current.title} status=${current.status}")
+    }
+
+    /** Like iPhone: after the initial burst, only the level parameter is re-sent, and only when it changes. */
+    fun refreshPower() {
+        val requested = powerRequested ?: return
+        if (!iphoneBehavior || 6 !in requested) return
+        val level = power.batteryPercent() ?: return
+        if (level == lastPowerLevel) return
+        lastPowerLevel = level
+        transport.sendControl(IphoneIap2.powerLevelUpdate(level))
+        transport.diagnostic("PowerUpdate level=$level")
     }
 
     /**
@@ -219,6 +245,7 @@ class CarPlaySession(
         lastWifiConfiguration = null
         accessoryName = ""
         nowPlayingSubscribed = false; lastNowPlaying = null
+        powerRequested = null; lastPowerLevel = null
         sessionState = State.Idle
     }
 
@@ -228,6 +255,7 @@ class CarPlaySession(
         lastWifiConfiguration = null
         accessoryName = ""
         nowPlayingSubscribed = false; lastNowPlaying = null
+        powerRequested = null; lastPowerLevel = null
         sessionState = State.LinkUp
     }
 
