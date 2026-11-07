@@ -33,6 +33,7 @@ data class AirPlayTimingSession(
  * Drives the AirPlay handshake sequence per OkcarOS reference (see
  * the protocol notes).
  *
+ *  0. POST /pair-setup x3, /pair-verify x2 (HomeKit pairing, enables control encryption)
  *  1. POST /auth-setup       (MFi-SAP client material)
  *  2. SETUP rtsp:.../uuid    (bplist with deviceID/eiv/ekey/timingPort)
  *  3. GET  /info             (server caps)
@@ -170,44 +171,21 @@ class AirPlayHandshakeOrchestrator(
             log("AirPlay: open RTSP control connection")
             rtsp.connect()
 
-            // 0. DIAGNOSTIC: GET /info as the VERY FIRST request, before
-            // /auth-setup. In standard AirPlay 2 an unauthenticated /info is
-            // allowed and returns the feature bitmask + HomeKit pk. If this
-            // 401s too, the endpoint requires pairing from the very start.
-            runCatching {
-                val probe = rtsp.getInfo()
-                log("AirPlay: [diag] first-request /info -> ${probe.statusCode} body=${probe.body.size}B")
-                if (probe.body.isNotEmpty()) {
-                    log("AirPlay: [diag] /info ascii=${probe.body.asciiPreview(probe.body.size.coerceAtMost(700))}")
-                    log("AirPlay: [diag] /info bodyHex=${probe.body.previewHex(probe.body.size.coerceAtMost(700))}")
-                }
-            }.onFailure { log("AirPlay: [diag] first-request /info failed: ${it.message}") }
-
-            // Skipped on the media path: CarPlayPairing sends its own pair-setup M1,
-            // and a second M1 would disturb the receiver's pair-setup state.
-            if (mediaOptions?.receiverPublicKey == null) {
-                // 0b. Full HomeKit pair-setup M1-M6 + pair-verify, as real iPhones do (reference reference).
-                // HKP 3, PIN 3939; receiver identity learned from M6. Control keys come from pair-verify.
-                val (cid, seed) = mediaOptions?.let { it.controllerId to it.seed } ?: pairingIdentity ?: (java.util.UUID.randomUUID().toString() to CarPlayCrypto.random(32))
-                runCatching { CarPlayPairing(cid, seed, null, mapOf("X-Apple-HKP" to "3"), "application/octet-stream", log).run(rtsp) }
-                    .onSuccess {
-                        verifySecret = it
-                        log("AirPlay: pair-setup + pair-verify complete; control encryption enabled")
-                        // 0c. DIAGNOSTIC: first encrypted request after pair-verify.
-                        runCatching {
-                            val info = rtsp.getInfo()
-                            log("AirPlay: [diag] post-pair-verify encrypted /info -> ${info.statusCode} body=${info.body.size}B headers=${info.headers}")
-                            if (info.body.isNotEmpty()) {
-                                val plist = runCatching { ReceiverPlist.decode(info.body) }
-                                plist.onSuccess { log("AirPlay: [diag] post-pair-verify encrypted /info plist=${plistText(it).take(3000)}") }
-                                    .onFailure { log("AirPlay: [diag] post-pair-verify encrypted /info not a bplist (${it.message}); hex=${info.body.previewHex(info.body.size.coerceAtMost(400))}") }
-                            }
-                        }.onFailure { log("AirPlay: [diag] post-pair-verify encrypted /info failed: ${it.javaClass.simpleName}: ${it.message}") }
-                    }
+            // Real iPhone order: pair-setup M1-M6 -> pair-verify -> /auth-setup -> SETUP -> /info -> RECORD.
+            // No /info probes before SETUP. Receiver key is pinned (iAP2 0x4301) or learned from M6.
+            val pinnedKey = mediaOptions?.receiverPublicKey
+            val (cid, seed) = mediaOptions?.let { it.controllerId to it.seed } ?: pairingIdentity ?: (java.util.UUID.randomUUID().toString() to CarPlayCrypto.random(32))
+            val pairing = CarPlayPairing(cid, seed, pinnedKey, mapOf("X-Apple-HKP" to "3"), "application/octet-stream", log)
+            val pairingSecret: ByteArray? = if (pinnedKey != null) {
+                log("AirPlay: completing pair-setup and pair-verify for encrypted media")
+                pairing.run(rtsp).also { verifySecret = it; log("AirPlay: pairing verified; control encryption enabled") }
+            } else {
+                runCatching { pairing.run(rtsp) }
+                    .onSuccess { verifySecret = it; log("AirPlay: pair-setup + pair-verify complete; control encryption enabled") }
                     .onFailure {
                         verifySecret = null
                         log("AirPlay: pair-setup/verify failed: ${it.javaClass.simpleName}: ${it.message}; continuing unpaired")
-                    }
+                    }.getOrNull()
             }
 
             // 1. /auth-setup
@@ -223,25 +201,6 @@ class AirPlayHandshakeOrchestrator(
             params.eiv = eiv
             params.ekey = ekey
             log("AirPlay: MFi-SAP ${if (keyOverride == null) "derived" else "overrode"} eiv=${eiv.size}B ekey=${ekey.size}B")
-
-            val pinnedKey = mediaOptions?.receiverPublicKey
-            val shared = if (mediaOptions != null && pinnedKey != null) {
-                log("AirPlay: completing pair-setup and pair-verify for encrypted media")
-                CarPlayPairing(mediaOptions.controllerId, mediaOptions.seed, pinnedKey, log = log).run(rtsp)
-                    .also { log("AirPlay: pairing verified; control encryption enabled") }
-            } else null
-            val pairingSecret = shared ?: verifySecret
-
-            // 1b. DIAGNOSTIC: GET /info BEFORE SETUP so we can read the car's
-            // feature bitmask + HomeKit pk even when SETUP would 401. This tells
-            // us whether the BMW requires HomeKit pair-setup/pair-verify
-            // (SupportsUnifiedPairSetupAndMFi) vs the MFi-SAP-only path.
-            runCatching {
-                val pre = rtsp.getInfo()
-                log("AirPlay: [diag] pre-SETUP /info -> ${pre.statusCode} body=${pre.body.size}B")
-                log("AirPlay: [diag] /info bodyHex=${pre.body.previewHex(pre.body.size.coerceAtMost(700))}")
-                log("AirPlay: [diag] /info ascii=${pre.body.asciiPreview(pre.body.size.coerceAtMost(700))}")
-            }.onFailure { log("AirPlay: [diag] pre-SETUP /info failed: ${it.message}") }
 
             // 2. Start timing before SETUP: answer the receiver's NTP requests on the
             // same clock as the audio sync anchors, as the sender does.
