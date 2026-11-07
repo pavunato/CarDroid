@@ -30,7 +30,7 @@ class AirPlaySessionSetupTest {
         val m = decode(params())
         listOf("deviceID", "macAddress", "model", "name", "osBuildVersion", "osName", "osVersion",
             "sessionCorrelationUUID", "sessionUUID", "sourceVersion").forEach { assertTrue(m[it] is String, it) }
-        assertTrue(m["features"] is Number)
+        assertEquals(listOf("iAPChannel"), m["features"])
         assertEquals(54321, (m["timingPort"] as Number).toInt())
         assertEquals(true, m["keepAliveLowPower"])
         assertEquals(false, m["statsCollectionEnabled"])

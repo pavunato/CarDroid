@@ -110,6 +110,8 @@ class AirPlayHandshakeOrchestrator(
     @Volatile private var iapTunnel: IapTunnelStream? = null // car-touch-iap2-tunnel
     val tunnel: IapTunnelStream? get() = iapTunnel // car-touch-iap2-tunnel
     private fun closeTunnel() { iapTunnel?.let { runCatching { it.close() } }; iapTunnel = null } // car-touch-iap2-tunnel
+    @Volatile private var keepAlive: AirPlayKeepAlive? = null
+    private fun stopKeepAlive() { keepAlive?.close(); keepAlive = null }
     private var feedbackJob: Job? = null
     private var timingSocket: DatagramSocket? = null
     private var timingSession: AirPlayTimingSession? = null
@@ -149,6 +151,7 @@ class AirPlayHandshakeOrchestrator(
         stopResourceModes()
         resourceArbiter.reset()
         closeTunnel() // car-touch-iap2-tunnel
+        stopKeepAlive()
         closePendingEvents()
         mediaTransport?.close(); mediaTransport = null
         takeTimingSession()?.let { ts -> runCatching { ts.close() } }
@@ -267,6 +270,13 @@ class AirPlayHandshakeOrchestrator(
             }
             setupResp.requireSuccess("SETUP")
             diagCapture("setup-resp", setupResp.body, CarDiagSummary.summarizeSetupResponse(setupResp.body)) // car-touch-iap2-tunnel
+
+            // keepAliveLowPower=true makes the receiver return keepAlivePort; an iPhone then sends periodic UDP to it.
+            (ReceiverPlist.map(setupResp.body)["keepAlivePort"] as? Number)?.toInt()?.takeIf { it in 1..65535 }?.let { kp ->
+                rtsp.connectedAddress?.let { addr ->
+                    keepAlive = AirPlayKeepAlive(addr, kp, log).also { it.start(scope) }
+                }
+            }
 
             // Real iPhone opens the session event socket immediately after SETUP,
             // before /info and RECORD. Some receivers wait for this connection
@@ -758,6 +768,7 @@ class AirPlayHandshakeOrchestrator(
         stopIapOut()
         stopResourceModes()
         closeTunnel() // car-touch-iap2-tunnel
+        stopKeepAlive()
         closePendingEvents()
         mediaTransport?.close(); mediaTransport = null
         feedbackJob?.cancel()
